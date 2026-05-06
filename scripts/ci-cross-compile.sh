@@ -1,9 +1,12 @@
 #!/usr/bin/env bash
 # CI cross-compile matrix. Builds the drift binary for every supported
 # OS-arch in one pass, sanity-checks the outputs.
-set -euo pipefail
+set -euxo pipefail
 
+pwd
+ls
 go version
+which go
 
 LDFLAGS='-s -w -buildid='
 
