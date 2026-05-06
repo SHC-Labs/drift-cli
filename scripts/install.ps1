@@ -14,7 +14,7 @@
 
 $ErrorActionPreference = 'Stop'
 
-$DriftRepo = if ($env:DRIFT_REPO) { $env:DRIFT_REPO } else { 'SHC-Labs/drift' }
+$DriftRepo = if ($env:DRIFT_REPO) { $env:DRIFT_REPO } else { 'SHC-Labs/drift-cli' }
 $DriftVersion = if ($env:DRIFT_VERSION) { $env:DRIFT_VERSION } else { 'latest' }
 $DriftInstallDir = if ($env:DRIFT_INSTALL_DIR) { $env:DRIFT_INSTALL_DIR } else { "$env:USERPROFILE\.local\bin" }
 

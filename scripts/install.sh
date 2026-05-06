@@ -13,7 +13,7 @@
 
 set -e
 
-DRIFT_REPO="${DRIFT_REPO:-SHC-Labs/drift}"
+DRIFT_REPO="${DRIFT_REPO:-SHC-Labs/drift-cli}"
 DRIFT_VERSION="${DRIFT_VERSION:-latest}"
 DRIFT_INSTALL_DIR="${DRIFT_INSTALL_DIR:-$HOME/.local/bin}"
 
