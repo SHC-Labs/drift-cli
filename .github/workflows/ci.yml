@@ -42,7 +42,12 @@ jobs:
         with:
           go-version-file: go.mod
           cache: false
-      - name: Just go version
-        run: go version
       - name: Cross-compile matrix
-        run: bash ./scripts/ci-cross-compile.sh
+        run: bash ./scripts/ci-cross-compile.sh > /tmp/xcompile.log 2>&1
+      - name: Upload log
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: xcompile-log
+          path: /tmp/xcompile.log
+          if-no-files-found: warn
