@@ -42,15 +42,17 @@ jobs:
         with:
           go-version-file: go.mod
           cache: false
-      - name: Debug environment
-        run: echo "hello from debug step"
-      - name: Cross-compile linux amd64
-        run: GOOS=linux GOARCH=amd64 CGO_ENABLED=0 go build -trimpath -ldflags="-s -w -buildid=" -o /tmp/drift-linux-amd64 ./cmd/drift
-      - name: Cross-compile linux arm64
-        run: GOOS=linux GOARCH=arm64 CGO_ENABLED=0 go build -trimpath -ldflags="-s -w -buildid=" -o /tmp/drift-linux-arm64 ./cmd/drift
-      - name: Cross-compile darwin amd64
-        run: GOOS=darwin GOARCH=amd64 CGO_ENABLED=0 go build -trimpath -ldflags="-s -w -buildid=" -o /tmp/drift-darwin-amd64 ./cmd/drift
-      - name: Cross-compile darwin arm64
-        run: GOOS=darwin GOARCH=arm64 CGO_ENABLED=0 go build -trimpath -ldflags="-s -w -buildid=" -o /tmp/drift-darwin-arm64 ./cmd/drift
-      - name: Cross-compile windows amd64
-        run: GOOS=windows GOARCH=amd64 CGO_ENABLED=0 go build -trimpath -ldflags="-s -w -buildid=" -o /tmp/drift-windows-amd64 ./cmd/drift
+      - name: Cross-compile matrix
+        env:
+          LDFLAGS: '-s -w -buildid='
+        run: |
+          go version
+          for target in linux/amd64 linux/arm64 darwin/amd64 darwin/arm64 windows/amd64; do
+            os="${target%/*}"
+            arch="${target#*/}"
+            echo "Building $os/$arch"
+            GOOS="$os" GOARCH="$arch" CGO_ENABLED=0 \
+              go build -trimpath -ldflags "$LDFLAGS" \
+              -o "/tmp/drift-${os}-${arch}" ./cmd/drift
+          done
+          ls -la /tmp/drift-*
