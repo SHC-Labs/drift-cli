@@ -1,6 +1,6 @@
 # Architecture
 
-How the drift binary is structured. For the full rewrite plan and architectural decisions baked in for life, see [DRIFT_BINARY_REWRITE_PLAN.md](../DRIFT_BINARY_REWRITE_PLAN.md) in the parent directory.
+How the drift binary is structured. The public contract (what won't break in v2 without a migration window) lives in [STABILITY.md](STABILITY.md); the deprecation policy in [DEPRECATION.md](DEPRECATION.md).
 
 ## Module layout
 
@@ -9,9 +9,9 @@ drift/
 ├── cmd/drift/main.go        Entry point, calls cli.Execute()
 └── internal/
     ├── cli/                 cobra subcommand handlers (one file per command)
-    ├── relay/               Local HTTP proxy + E2EE pipeline
+    ├── relay/               local HTTP proxy + E2EE pipeline
     ├── crypto/              ECDH, AEAD, HKDF wrappers (interface-driven)
-    ├── keychain/            OS keychain wrapper (99designs/keyring)
+    ├── keychain/            OS keychain wrapper (zalando/go-keyring)
     ├── service/             systemd / launchd / Windows Service (kardianos)
     ├── hook/                prompt-submit + post-tool-use handlers
     ├── clients/             MCP client detection + per-client config writers
@@ -20,6 +20,7 @@ drift/
     ├── update/              atomic self-update + cosign signature verification
     ├── ipc/                 local socket / named pipe / port abstraction
     ├── doctor/              diagnostics dump for support tickets
+    ├── log/                 structured JSON log writer with rotation
     ├── telemetry/           opt-out kill switch + state event POSTs
     ├── migration/           legacy install detection + cleanup
     └── version/             build info + protocol versions + AEAD algorithms
@@ -36,7 +37,7 @@ The AI client invokes hooks via `drift internal hook prompt-submit` (UserPromptS
 ### Common contract (both hooks)
 
 - Always exits 0. Success, silent skip, and loud-failure all return zero exit. Non-zero is reserved for genuine binary panic.
-- Reads config from `~/.mcp.json` (Bearer token, server URL).
+- Reads the relay URL from `~/.mcp.json`. The Bearer token lives in the OS keychain; the local relay handles upstream auth.
 - Project gate: requires a `.drift.json` file with `enabled: true` somewhere up the directory tree from the search root.
 - Honors `DRIFT_HOOK_SILENT=1` env to fall back to silent exit on every gate (back-compat for users who want the old quiet behavior).
 - `~/.mcp.json` validation rejects empty token and the literal `YOUR_DRIFT_TOKEN` placeholder.
@@ -128,9 +129,13 @@ Set `DRIFT_HOOK_SILENT=1` to restore the old silent-exit behavior. This exists f
 
 ## Crypto pipeline
 
-See "Audit findings" subsection in [DRIFT_BINARY_REWRITE_PLAN.md](../DRIFT_BINARY_REWRITE_PLAN.md). v1 ships AES-GCM-256 with random 96-bit nonces, byte-identical to the existing TS relay. ECDH curve is P-256 (NOT X25519). HKDF-SHA256 with fixed info strings.
+v1 ships AES-GCM-256 with random 96-bit nonces, byte-identical to the existing TS relay. ECDH curve is P-256 (NOT X25519). HKDF-SHA256 with fixed info strings (`drift-kek-wrap-v1`, `drift-session:<YYYY-MM-DD>`, `drift-tag-v1`). HMAC-SHA256 fingerprints with the message `drift-relay:fingerprint`, truncated to 4 bytes hex.
 
-`internal/crypto/aead.go` defines an `AEAD` interface so v1.x can add ChaCha20-Poly1305 via the algorithm negotiation handshake without a protocol break.
+Content envelope: `drift-e2ee-v1:` prefix + base64(JSON) where JSON keys are emitted in fixed order (`v, ct, nonce, tag, dek_id?, project_hash?`) for byte-identical TS interop. Inner `ct`, `nonce`, `tag` fields are base64 strings.
+
+KEK wrap output: separate `wrapped_kek` / `nonce` / `tag` byte slices (server stores opaquely as base64). Key sizes: DEK 32B, KEK 32B, ECDH privkey 32B, ECDH pubkey 65B uncompressed SEC1 (`0x04 || X(32) || Y(32)`).
+
+`internal/crypto/aead.go` defines an `AEAD` interface so future versions can add ChaCha20-Poly1305 via the algorithm negotiation handshake without a protocol break.
 
 ## Local IPC
 

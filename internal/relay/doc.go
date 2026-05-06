@@ -3,7 +3,7 @@
 // content fields, exposes a localhost port the MCP client connects to, and
 // runs as a goroutine inside the service.
 //
-// Sprint 2 fills this in. v1 ships byte-identical to the existing TS relay
-// (drift-e2ee-v1: envelope, AES-256-GCM with random 96-bit nonces, see
-// DRIFT_BINARY_REWRITE_PLAN.md "Audit findings" for the full contract).
+// v1 ships byte-identical to the existing TS relay (drift-e2ee-v1: envelope,
+// AES-GCM-256 with random 96-bit nonces). See ARCHITECTURE.md for the full
+// crypto pipeline contract.
 package relay

@@ -29,8 +29,8 @@ type kekFetchResponse struct {
 // kek_version; we re-fetch + re-unwrap.
 //
 // Mirrors the TS relay's KekManager with simpler semantics: no legacy
-// org-key migration path (Sprint 2 v1 doesn't carry over the C.1-C.3
-// keystore migration).
+// org-key migration path (v1 doesn't carry over the C.1-C.3 keystore
+// migration).
 type KEKManager struct {
 	client *api.Client
 	keys   *crypto.ECDHKeyPair

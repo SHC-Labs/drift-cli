@@ -1,6 +1,6 @@
-# CI for the drift binary. Sprint 1 stub: build + test + cross-compile + the
-# shell-injection grep guard. Sprint 4 adds reproducible-build verification,
-# coverage thresholds, fuzz testing, and the cosign / SLSA release pipeline.
+# CI for the drift binary. Build + test + cross-compile + shell-injection
+# grep guard. Reproducible-build verification, fuzz testing, and the
+# cosign / SLSA release pipeline live in release.yml (triggered on tag).
 
 name: ci
 

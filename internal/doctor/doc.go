@@ -3,5 +3,6 @@
 // status (cwd .drift.json walkup), per-client hook health, service status
 // (kardianos.Status()), last 50 log lines from ~/.drift/logs/drift.log.
 //
-// Customers fix 80% of their own problems with this. Sprint 3 fills it in.
+// Customers fix 80% of their own problems with this; the rest paste the
+// output to support@driftlabs.io.
 package doctor

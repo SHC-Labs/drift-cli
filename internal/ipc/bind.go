@@ -30,8 +30,8 @@ const probeTimeout = 250 * time.Millisecond
 // (don't try 47821 -> 47822 -> 47823, exit with clear error)" so we
 // return a clean error instead of silently picking a different port.
 //
-// Sprint 2's relay code calls this. Sprint 1 ships the function so the
-// bind shape is locked in.
+// The relay code calls this from the service entrypoint with the
+// listener for the persisted port.
 func BindHardened(ctx context.Context, port int) (net.Listener, error) {
 	addr := net.JoinHostPort(LocalBindAddr, strconv.Itoa(port))
 

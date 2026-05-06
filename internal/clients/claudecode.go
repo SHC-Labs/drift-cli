@@ -17,11 +17,10 @@ type ClaudeCodeInfo struct {
 // The heuristic: presence of ~/.claude/. Cheap, reliable, and the same
 // signal the bash install template used.
 //
-// Per-project hook registration lives in drift init (Sprint 2), which
-// writes <project>/.claude/settings.local.json. drift install does NOT
-// touch the global settings.json; that's a deliberate choice carried over
-// from the bash install (see packages/server/src/index.ts comment around
-// "Hooks are NOT registered in ~/.claude/settings.json").
+// Per-project hook registration lives in drift init, which writes
+// <project>/.claude/settings.local.json. drift install does NOT touch
+// the global settings.json; that's a deliberate choice carried over
+// from the bash install.
 //
 // Kept around for callers that want the typed ClaudeCodeInfo struct;
 // new code should use DetectAll() in detect.go for multi-client work.

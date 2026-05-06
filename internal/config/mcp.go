@@ -68,12 +68,11 @@ func ReadMCP() (*MCPConfig, error) {
 		return nil, fmt.Errorf("parse mcpServers.drift: %w", err)
 	}
 
-	// Authorization header in mcp.json is OPTIONAL in Sprint 2+ (local-
-	// relay mode). The relay adds the Bearer header from the keychain
-	// on outbound to upstream; the inbound header from the MCP client
-	// to the local relay isn't needed. Legacy Sprint 1 mcp.json files
-	// that still have Bearer in here just round-trip through ReadMCP
-	// for callers that want it.
+	// Authorization header in mcp.json is OPTIONAL in local-relay mode.
+	// The relay adds the Bearer header from the keychain on outbound
+	// to upstream; the inbound header from the MCP client to the local
+	// relay isn't needed. Legacy mcp.json files that still have Bearer
+	// in here just round-trip through ReadMCP for callers that want it.
 	authz := entry.Headers["Authorization"]
 	token := strings.TrimSpace(strings.TrimPrefix(authz, "Bearer "))
 	if token != "" && strings.Contains(token, "YOUR_DRIFT_TOKEN") {

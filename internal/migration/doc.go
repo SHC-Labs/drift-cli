@@ -13,6 +13,7 @@
 // Backup before destructive write: copy old configs to
 // ~/.drift/backups/<timestamp>/ before rewriting.
 //
-// Sprint 1 day 4-5 ships detection + logging only (no removal yet).
-// Sprint 3 ships the cleanup.
+// Detection + cleanup with backup-before-delete. drift install + drift
+// update remove the artifacts; --keep-legacy preserves them for A/B
+// comparison.
 package migration

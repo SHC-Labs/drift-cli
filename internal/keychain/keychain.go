@@ -8,7 +8,7 @@
 //   - InstallID (UUID) the anonymous machine identifier for state events
 //   - PrivKeyHex (64 hex chars) the customer's ECDH privkey for KEK wrap
 //
-// Sprint 2 introduces this; Sprint 3's drift login + drift logout drive it.
+// drift login + drift logout drive the lifecycle.
 package keychain
 
 import (

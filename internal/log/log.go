@@ -32,7 +32,7 @@ const (
 
 // MaxFileSize is the rotation threshold. Files larger than this get
 // rotated to .1, .2, etc on the next write. 10MB is generous for a
-// local relay; Sprint 4 friend-customer testing can revise.
+// local relay; revise once we have customer-volume telemetry.
 const MaxFileSize = 10 * 1024 * 1024
 
 // MaxGenerations is how many rotated files we keep before deleting.

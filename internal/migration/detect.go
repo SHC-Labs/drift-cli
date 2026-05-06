@@ -14,12 +14,10 @@ type LegacyArtifacts struct {
 // Found is shorthand for len(la.Paths) > 0.
 func (la LegacyArtifacts) Found() bool { return len(la.Paths) > 0 }
 
-// Detect scans the user's home for legacy artifacts. Sprint 1 day 4-5
-// scope: file-presence checks only, no removal. Sprint 3 fills in the
-// removal logic + the npm package + schtasks process detection.
-//
-// Artifacts checked here mirror the migration list in
-// DRIFT_BINARY_REWRITE_PLAN.md "Migration logic, mandatory cleanup".
+// Detect scans the user's home for legacy artifacts. File-presence
+// checks only; the cleanup logic in cleanup.go handles removal with
+// backup-before-delete. The npm package + schtasks process detection
+// is deferred to a follow-up since cleanup needs npm installed.
 func Detect() LegacyArtifacts {
 	home, err := os.UserHomeDir()
 	if err != nil {

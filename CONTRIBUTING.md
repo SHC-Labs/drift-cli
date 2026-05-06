@@ -4,7 +4,7 @@ drift is open source under MIT. PRs welcome from the community.
 
 ## Before you start
 
-Read [DRIFT_BINARY_REWRITE_PLAN.md](../DRIFT_BINARY_REWRITE_PLAN.md). Every architectural decision has a reason; the plan documents the reasons. If you're tempted to argue with a decision, check the plan first; the conversation may already have happened.
+Read [ARCHITECTURE.md](ARCHITECTURE.md) and [STABILITY.md](STABILITY.md). Every architectural decision has a reason; the docs explain why. If you're tempted to argue with a decision, check the docs first; the conversation may already have happened.
 
 ## Build
 

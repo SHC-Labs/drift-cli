@@ -3,7 +3,4 @@
 // writes the right config for each. Conservative writers: read existing
 // config, modify only fields drift owns, write atomically. Never overwrite
 // unrelated fields.
-//
-// v1 ships Claude Code support first (Sprint 1), other clients incrementally
-// in Sprint 3.
 package clients

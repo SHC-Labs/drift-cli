@@ -26,11 +26,11 @@ type CleanupResult struct {
 // Honors the --keep-legacy escape: caller passes keepLegacy=true to
 // run detection only and not actually remove anything.
 //
-// Sprint 3 deliverable per the plan; backs up + removes the bash
-// hook scripts, supervisor.ps1, sentinel files, and similar relics.
-// Does NOT remove the npm @shadow-corp/drift-relay package; that
-// requires shelling to npm and we want to keep cleanup pure-Go.
-// drift install prints a one-liner the customer runs themselves.
+// Backs up + removes the bash hook scripts, supervisor.ps1, sentinel
+// files, and similar relics. Does NOT remove the npm
+// @shadow-corp/drift-relay package; that requires shelling to npm and
+// we want cleanup to stay pure-Go. drift install prints a one-liner
+// the customer runs themselves.
 func Cleanup(keepLegacy bool) []CleanupResult {
 	la := Detect()
 	if !la.Found() || keepLegacy {

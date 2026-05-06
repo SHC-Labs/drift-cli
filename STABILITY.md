@@ -31,7 +31,7 @@ Hidden subcommands (`drift internal hook *`, `drift _service`) are NOT part of t
 
 ### Hook protocol
 
-Documented in [ARCHITECTURE.md](ARCHITECTURE.md) once Sprint 1 day 2-3 lands the port. Stable: the env vars read, the stdin format, the stdout `<drift-context>` block format, exit codes, the 5-second timeout budget.
+Documented in detail in [ARCHITECTURE.md](ARCHITECTURE.md). Stable: the env vars read, the stdin format, the stdout `<drift-context>` block format, exit codes, the 5-second timeout budget.
 
 ### State event payloads
 

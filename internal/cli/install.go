@@ -50,8 +50,8 @@ Idempotent: re-running drift install upserts the drift entry in
 ~/.mcp.json, leaving every other server entry unchanged.
 
 Detects legacy install artifacts (bash hook scripts, supervisor.ps1,
-.bat wrappers) and lists them. Sprint 3 ships the cleanup logic; v1 day
-2-3 lists what would be removed without removing anything.
+.bat wrappers) and removes them with backup-before-delete to
+~/.drift/backups/<timestamp>/. Use --keep-legacy to preserve them.
 
 Provide your token via the DRIFT_TOKEN env var to skip the YOUR_DRIFT_TOKEN
 placeholder:

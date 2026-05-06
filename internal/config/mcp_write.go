@@ -12,11 +12,11 @@ import (
 // preserves every other top-level field and every other mcpServers entry,
 // writes atomically.
 //
-// driftURL is the URL the MCP client connects to. In Sprint 2+ this is
-// the LOCAL relay (http://127.0.0.1:<port>/mcp), not the upstream. The
-// relay handles the upstream Bearer auth from the keychain, so this
-// entry has no Authorization header at all -- the local relay accepts
-// any localhost connection.
+// driftURL is the URL the MCP client connects to: the LOCAL relay
+// (http://127.0.0.1:<port>/mcp), not the upstream. The relay handles
+// the upstream Bearer auth from the keychain, so this entry has no
+// Authorization header at all -- the local relay accepts any
+// localhost connection.
 func WriteMCPDriftEntry(driftURL string) error {
 	path := MCPPath()
 

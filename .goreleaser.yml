@@ -1,8 +1,7 @@
 # goreleaser config for drift v1. Cross-compiles to 5 OS-arch targets,
 # emits checksums + cosign signatures + SLSA-3 attestation, publishes
 # to GitHub Releases + Homebrew tap. Authenticode signing on Windows
-# and Apple notarization on macOS land when the certs are procured
-# (DRIFT_BINARY_REWRITE_PLAN.md procurement parallel track).
+# and Apple notarization on macOS land once the certs are procured.
 #
 # Run locally: `goreleaser release --snapshot --clean` (no publishing).
 # Run in CI: tagged push triggers .github/workflows/release.yml.
@@ -124,7 +123,7 @@ winget:
           name: winget-pkgs
           branch: master
 
-# Future additions (Sprint 4 cert procurement + post-launch demand):
+# Future additions (cert procurement + post-launch demand):
 # - notarize: (Apple notarization once DEVELOPER_ID_APPLICATION cert lands)
 # - signs[]: Authenticode for Windows .exe (separate signtool step)
 # - nfpms: (.deb / .rpm packages for APT / DNF distribution)

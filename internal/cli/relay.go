@@ -1,12 +1,12 @@
 package cli
 
 import (
-	"errors"
 	"fmt"
 	"io"
 
 	"github.com/spf13/cobra"
 
+	driftlog "github.com/SHC-Labs/drift/internal/log"
 	"github.com/SHC-Labs/drift/internal/ipc"
 	"github.com/SHC-Labs/drift/internal/service"
 )
@@ -17,6 +17,15 @@ func newRelayCmd() *cobra.Command {
 		Short: "Inspect the embedded relay",
 		Long:  "The relay runs as a goroutine inside the service. Customers don't manage it directly.",
 	}
+	var logLines int
+	logsCmd := &cobra.Command{
+		Use:   "logs",
+		Short: "Tail recent relay logs",
+		RunE: func(cmd *cobra.Command, args []string) error {
+			return runRelayLogs(cmd.OutOrStdout(), logLines)
+		},
+	}
+	logsCmd.Flags().IntVarP(&logLines, "lines", "n", 100, "Number of lines to print")
 	relay.AddCommand(
 		&cobra.Command{
 			Use:   "status",
@@ -25,15 +34,27 @@ func newRelayCmd() *cobra.Command {
 				return runRelayStatus(cmd.OutOrStdout())
 			},
 		},
-		&cobra.Command{
-			Use:   "logs",
-			Short: "Tail recent relay logs (last N lines)",
-			RunE: func(cmd *cobra.Command, args []string) error {
-				return errors.New("drift relay logs: structured logging lands in Sprint 3")
-			},
-		},
+		logsCmd,
 	)
 	return relay
+}
+
+func runRelayLogs(stdout io.Writer, n int) error {
+	if n <= 0 {
+		n = 100
+	}
+	lines, err := driftlog.Tail(n)
+	if err != nil {
+		return fmt.Errorf("read log: %w", err)
+	}
+	if len(lines) == 0 {
+		fmt.Fprintln(stdout, "(no log lines yet)")
+		return nil
+	}
+	for _, line := range lines {
+		fmt.Fprintln(stdout, line)
+	}
+	return nil
 }
 
 func runRelayStatus(stdout io.Writer) error {

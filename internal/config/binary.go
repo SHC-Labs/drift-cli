@@ -14,7 +14,7 @@ import (
 const CurrentBinaryConfigVersion = 1
 
 // BinaryConfig is the persistent state ~/.drift/config.json holds. Lives
-// alongside the keychain entry (token + install_id, Sprint 2 lands keychain).
+// alongside the keychain entry (token + install_id + ECDH privkey).
 //
 // Schema-versioned per the plan's migration framework: every persistent
 // JSON file has {"version": N, ...}. Adding new fields in v2 means a new
@@ -22,7 +22,7 @@ const CurrentBinaryConfigVersion = 1
 type BinaryConfig struct {
 	Version    int    `json:"version"`
 	RelayPort  int    `json:"relay_port,omitempty"`  // persisted random port, 0 if not yet chosen
-	InstallID  string `json:"install_id,omitempty"`  // UUID, Sprint 2 migrates to keychain
+	InstallID  string `json:"install_id,omitempty"`  // UUID, also mirrored in keychain
 	Telemetry  string `json:"telemetry,omitempty"`   // "on" | "off" | "" (default on per PRIVACY.md)
 }
 
