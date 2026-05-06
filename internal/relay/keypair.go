@@ -2,6 +2,7 @@ package relay
 
 import (
 	"context"
+	"encoding/base64"
 	"encoding/hex"
 	"errors"
 	"fmt"
@@ -57,14 +58,16 @@ func EnsureKeyPair(ctx context.Context, c *api.Client) (*crypto.ECDHKeyPair, err
 	return kp, nil
 }
 
-// publishPubkey POSTs the pubkey to /v1/relay/pubkey/me. Server
-// stores it under the developer_id derived from the Bearer token.
+// publishPubkey POSTs the pubkey to /api/relay/pubkey. Server stores
+// it under the developer_id derived from the Bearer token. Body shape
+// matches the TS server: ecdh_pubkey is base64 (not hex), fingerprint
+// is hex.
 func publishPubkey(ctx context.Context, c *api.Client, pubkey []byte) error {
 	body := map[string]any{
-		"ecdh_pubkey": hex.EncodeToString(pubkey),
+		"ecdh_pubkey": base64.StdEncoding.EncodeToString(pubkey),
 		"fingerprint": crypto.PubKeyFingerprint(pubkey),
 	}
-	if err := c.PostJSON(ctx, "/v1/relay/pubkey/me", body); err != nil {
+	if err := c.PostJSON(ctx, "/api/relay/pubkey", body); err != nil {
 		return fmt.Errorf("publish pubkey: %w", err)
 	}
 	log.Info("relay.keypair", "published", map[string]any{

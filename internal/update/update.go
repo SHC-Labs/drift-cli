@@ -26,7 +26,7 @@ import (
 
 // VersionEndpoint is the URL the binary checks for newer versions.
 // Override via DRIFT_API_URL for staging tests.
-const VersionEndpoint = "/v1/cli/version"
+const VersionEndpoint = "/api/cli/version"
 
 // VersionInfo is the response from /v1/cli/version. The server
 // returns the latest version per OS-arch plus the URLs for the

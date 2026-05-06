@@ -61,19 +61,19 @@ type HeartbeatResponse struct {
 // Caller controls retry by calling this in a goroutine; this function
 // itself does the SINGLE attempt + returns.
 func (c *Client) PostCLIInstalled(ctx context.Context, req CLIInstalledRequest) error {
-	return c.postJSON(ctx, "/v1/install/cli-installed", req, nil)
+	return c.postJSON(ctx, "/api/install/cli-installed", req, nil)
 }
 
 // PostClientConnected fires per detected MCP client. Multiple calls
 // per install allowed.
 func (c *Client) PostClientConnected(ctx context.Context, req ClientConnectedRequest) error {
-	return c.postJSON(ctx, "/v1/install/client-connected", req, nil)
+	return c.postJSON(ctx, "/api/install/client-connected", req, nil)
 }
 
 // PostRelayEnabled fires once when the relay binds and completes its
 // upstream handshake successfully.
 func (c *Client) PostRelayEnabled(ctx context.Context, req RelayEnabledRequest) error {
-	return c.postJSON(ctx, "/v1/install/relay-enabled", req, nil)
+	return c.postJSON(ctx, "/api/install/relay-enabled", req, nil)
 }
 
 // PostRelayHeartbeat fires periodically. Captures the optional cadence
@@ -98,7 +98,7 @@ func (c *Client) PostRelayHeartbeat(ctx context.Context, req RelayHeartbeatReque
 			hbResp.CadenceSeconds = n
 		}
 	}
-	if err := c.postJSON(ctx, "/v1/install/relay-heartbeat", req, hookFn); err != nil {
+	if err := c.postJSON(ctx, "/api/install/relay-heartbeat", req, hookFn); err != nil {
 		return nil, err
 	}
 	return hbResp, nil

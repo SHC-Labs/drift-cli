@@ -245,7 +245,7 @@ func setupPipeline(ctx context.Context, opts Options) *Pipeline {
 	}
 	kek := NewKEKManager(client, keys)
 	dek := NewDEKManager(client, kek)
-	projectDeks := NewProjectDEKManager(client, kek)
+	projectDeks := NewProjectDEKManager(client, kek, dek)
 	log.Info("relay.pipeline", "ready", nil)
 	return NewPipeline(dek, projectDeks)
 }

@@ -48,7 +48,7 @@ const LoginTimeout = 5 * time.Minute
 //  3. Open the user's browser to the dashboard's /cli/login URL with
 //     state, code_challenge, and the localhost callback URL.
 //  4. Wait for the browser to POST back the code + state.
-//  5. Exchange the code + verifier at /v1/cli/token to get the API
+//  5. Exchange the code + verifier at /api/cli/token to get the API
 //     token.
 //  6. Return the token (caller stores in keychain).
 //
@@ -207,7 +207,7 @@ func callbackPage(msg string) string {
 }
 
 // exchangeCode swaps the auth code + verifier for the API token at
-// /v1/cli/token. Returns the LoginResult on success.
+// /api/cli/token. Returns the LoginResult on success.
 func exchangeCode(ctx context.Context, baseURL, code, verifier string) (*LoginResult, error) {
 	body := map[string]string{
 		"code":          code,
@@ -218,7 +218,7 @@ func exchangeCode(ctx context.Context, baseURL, code, verifier string) (*LoginRe
 		return nil, err
 	}
 	req, err := http.NewRequestWithContext(ctx, http.MethodPost,
-		strings.TrimRight(baseURL, "/")+"/v1/cli/token",
+		strings.TrimRight(baseURL, "/")+"/api/cli/token",
 		strings.NewReader(string(jsonBody)))
 	if err != nil {
 		return nil, err

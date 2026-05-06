@@ -12,25 +12,39 @@ import (
 	"github.com/SHC-Labs/drift/internal/log"
 )
 
-// kekFetchResponse is the wire format from /v1/relay/kek-wrap. Server
-// returns the wrapped KEK plus the sender's pubkey so the recipient
-// can derive the symmetric wrap key via ECDH.
+// kekFetchResponse is the wire format from GET /api/relay/kek-wrap.
+// Server returns the wrapped KEK + the sender_developer_id (NOT the
+// sender pubkey directly). The recipient looks up the sender's pubkey
+// separately via /api/relay/pubkey and runs ECDH against own privkey.
 type kekFetchResponse struct {
-	WrappedKEK   string `json:"wrapped_kek"`   // base64 ciphertext
-	Nonce        string `json:"nonce"`         // base64
-	Tag          string `json:"tag"`           // base64
-	SenderPubkey string `json:"sender_pubkey"` // hex
-	KEKVersion   int    `json:"kek_version"`
+	ID                   string `json:"id"`
+	OrgID                string `json:"org_id"`
+	RecipientDeveloperID string `json:"recipient_developer_id"`
+	SenderDeveloperID    string `json:"sender_developer_id"`
+	KEKVersion           int    `json:"kek_version"`
+	WrappedKEK           string `json:"wrapped_kek"` // base64
+	Nonce                string `json:"nonce"`       // base64
+	Tag                  string `json:"tag"`         // base64
 }
 
-// KEKManager owns the org KEK lifecycle: fetch, unwrap, cache,
-// surface. The cached KEK lives in memory only; it never hits disk.
-// On rotation the server returns a new wrap with an incremented
-// kek_version; we re-fetch + re-unwrap.
+// pubkeyListEntry is one item in GET /api/relay/pubkey's response array.
+// Used to look up sender pubkey when unwrapping a KEK.
+type pubkeyListEntry struct {
+	DeveloperID string `json:"developer_id"`
+	OrgID       string `json:"org_id"`
+	ECDHPubkey  string `json:"ecdh_pubkey"` // base64
+	Fingerprint string `json:"fingerprint"`
+}
+
+type pubkeyListResponse struct {
+	Pubkeys []pubkeyListEntry `json:"pubkeys"`
+}
+
+// KEKManager owns the org KEK lifecycle: fetch wrapped, look up sender
+// pubkey, ECDH unwrap, cache, surface. The cached KEK lives in memory
+// only; never hits disk.
 //
-// Mirrors the TS relay's KekManager with simpler semantics: no legacy
-// org-key migration path (v1 doesn't carry over the C.1-C.3 keystore
-// migration).
+// Mirrors the TS relay's KekManager at the wire level.
 type KEKManager struct {
 	client *api.Client
 	keys   *crypto.ECDHKeyPair
@@ -49,9 +63,7 @@ func NewKEKManager(client *api.Client, keys *crypto.ECDHKeyPair) *KEKManager {
 }
 
 // Get returns the current org KEK, fetching + unwrapping from the
-// server on first call or after the cache expires. Caches for 1 hour;
-// rotation in the same window forces a re-fetch when the server
-// returns a 410 Gone or similar on subsequent operations.
+// server on first call or after the cache expires. Caches for 1 hour.
 func (m *KEKManager) Get(ctx context.Context) ([]byte, error) {
 	m.mu.RLock()
 	if m.current != nil && time.Now().Before(m.expiry) {
@@ -63,8 +75,6 @@ func (m *KEKManager) Get(ctx context.Context) ([]byte, error) {
 
 	m.mu.Lock()
 	defer m.mu.Unlock()
-	// Re-check after acquiring write lock; another goroutine may have
-	// raced us and populated the cache.
 	if m.current != nil && time.Now().Before(m.expiry) {
 		return append([]byte{}, m.current...), nil
 	}
@@ -74,9 +84,9 @@ func (m *KEKManager) Get(ctx context.Context) ([]byte, error) {
 		return nil, fmt.Errorf("fetch KEK: %w", err)
 	}
 
-	senderPub, err := decodeSenderPubkey(wrapped.SenderPubkey)
+	senderPub, err := lookupSenderPubkey(ctx, m.client, wrapped.SenderDeveloperID)
 	if err != nil {
-		return nil, err
+		return nil, fmt.Errorf("lookup sender pubkey: %w", err)
 	}
 	wk, err := decodeWrappedKEK(wrapped)
 	if err != nil {
@@ -109,15 +119,30 @@ func (m *KEKManager) Invalidate() {
 	m.expiry = time.Time{}
 }
 
-// fetchWrappedKEK calls /v1/relay/kek-wrap to retrieve the wrapped
-// KEK for this recipient (the developer identified by the Bearer
-// token).
+// fetchWrappedKEK calls GET /api/relay/kek-wrap to retrieve the
+// active wrapped KEK for this developer.
 func fetchWrappedKEK(ctx context.Context, c *api.Client) (*kekFetchResponse, error) {
 	var resp kekFetchResponse
-	if err := c.GetJSON(ctx, "/v1/relay/kek-wrap", &resp); err != nil {
+	if err := c.GetJSON(ctx, "/api/relay/kek-wrap", &resp); err != nil {
 		return nil, err
 	}
 	return &resp, nil
+}
+
+// lookupSenderPubkey calls GET /api/relay/pubkey (org-wide listing)
+// and finds the entry for senderDeveloperID. Returns the sender's
+// ECDH pubkey bytes for the ECDH unwrap.
+func lookupSenderPubkey(ctx context.Context, c *api.Client, senderDeveloperID string) ([]byte, error) {
+	var resp pubkeyListResponse
+	if err := c.GetJSON(ctx, "/api/relay/pubkey", &resp); err != nil {
+		return nil, fmt.Errorf("list pubkeys: %w", err)
+	}
+	for _, p := range resp.Pubkeys {
+		if p.DeveloperID == senderDeveloperID {
+			return base64.StdEncoding.DecodeString(p.ECDHPubkey)
+		}
+	}
+	return nil, fmt.Errorf("sender %s pubkey not in org list", senderDeveloperID)
 }
 
 // decodeWrappedKEK turns the base64 fields from the wire response
@@ -140,13 +165,4 @@ func decodeWrappedKEK(resp *kekFetchResponse) (*crypto.WrappedKEK, error) {
 		Nonce:   nonce,
 		Tag:     tag,
 	}, nil
-}
-
-// decodeSenderPubkey hex-decodes the sender pubkey. TS relay
-// publishes pubkeys as hex; the wire format mirrors that.
-func decodeSenderPubkey(hexStr string) ([]byte, error) {
-	if hexStr == "" {
-		return nil, fmt.Errorf("empty sender pubkey")
-	}
-	return decodeHexPubkey(hexStr)
 }

@@ -71,7 +71,7 @@ func (h HandshakeResult) Has(feature string) bool {
 }
 
 // Handshake performs the capability negotiation against the server.
-// POST /v1/capabilities with this binary's capabilities; server returns
+// POST /api/capabilities with this binary's capabilities; server returns
 // its preferences and the feature set enabled for this client.
 //
 // Cached for the lifetime of the process: handshakes are stable across
@@ -92,7 +92,7 @@ func Handshake(ctx context.Context, client *Client) (*HandshakeResult, error) {
 	}
 
 	req, err := http.NewRequestWithContext(ctx, http.MethodPost,
-		client.URL("/v1/capabilities"), bytes.NewReader(body))
+		client.URL("/api/capabilities"), bytes.NewReader(body))
 	if err != nil {
 		return nil, err
 	}
@@ -107,7 +107,7 @@ func Handshake(ctx context.Context, client *Client) (*HandshakeResult, error) {
 	defer resp.Body.Close()
 
 	if resp.StatusCode == http.StatusNotFound {
-		// Server hasn't deployed /v1/capabilities yet. Fall back to
+		// Server hasn't deployed /api/capabilities yet. Fall back to
 		// the binary's defaults: AES-GCM-256 only, no extra features.
 		// This keeps the binary working against older servers during
 		// the rollout window.
