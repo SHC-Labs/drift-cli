@@ -1,10 +1,12 @@
 /dist/
 /build/
 *.exe
-drift
-drift-darwin-*
-drift-linux-*
-drift-windows-*
+# Anchor the binary-name pattern to repo root so it doesn't shadow
+# cmd/drift/ — the package directory shares a name with the binary.
+/drift
+/drift-darwin-*
+/drift-linux-*
+/drift-windows-*
 *.sig
 *.cert
 .DS_Store
