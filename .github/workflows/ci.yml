@@ -43,12 +43,7 @@ jobs:
           go-version-file: go.mod
           cache: false
       - name: Debug environment
-        run: |
-          set -x
-          go version
-          which go
-          go env GOROOT GOPATH
-          ls cmd/drift/
+        run: echo "hello from debug step"
       - name: Cross-compile linux amd64
         run: GOOS=linux GOARCH=amd64 CGO_ENABLED=0 go build -trimpath -ldflags="-s -w -buildid=" -o /tmp/drift-linux-amd64 ./cmd/drift
       - name: Cross-compile linux arm64
