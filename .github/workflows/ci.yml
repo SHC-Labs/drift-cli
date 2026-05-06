@@ -1,0 +1,53 @@
+# CI for the drift binary. Sprint 1 stub: build + test + cross-compile + the
+# shell-injection grep guard. Sprint 4 adds reproducible-build verification,
+# coverage thresholds, fuzz testing, and the cosign / SLSA release pipeline.
+
+name: ci
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+    branches: [main]
+
+jobs:
+  build:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-go@v5
+        with:
+          go-version: '1.24'
+          cache: true
+      - name: go vet
+        run: go vet ./...
+      - name: go build
+        run: go build ./...
+      - name: go test
+        run: go test ./...
+      - name: No shell injection
+        # Hook code never shells out. exec.Command(name, args...) only.
+        # Never exec.Command("sh", "-c", "<interpolated>"). See SECURITY.md.
+        run: |
+          if grep -rn 'exec.Command.*sh.*-c' --include='*.go' .; then
+            echo "Found shell injection pattern; use exec.Command(name, args...) instead"
+            exit 1
+          fi
+
+  cross-compile:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-go@v5
+        with:
+          go-version: '1.24'
+          cache: true
+      - name: Cross-compile matrix
+        run: |
+          set -e
+          for target in linux/amd64 linux/arm64 darwin/amd64 darwin/arm64 windows/amd64; do
+            GOOS=${target%/*} GOARCH=${target#*/} CGO_ENABLED=0 \
+              go build -trimpath -ldflags="-s -w -buildid=" \
+              -o /tmp/drift-$(echo $target | tr / -) ./cmd/drift
+            echo "OK $target"
+          done

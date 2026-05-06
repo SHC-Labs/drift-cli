@@ -1,0 +1,131 @@
+# goreleaser config for drift v1. Cross-compiles to 5 OS-arch targets,
+# emits checksums + cosign signatures + SLSA-3 attestation, publishes
+# to GitHub Releases + Homebrew tap. Authenticode signing on Windows
+# and Apple notarization on macOS land when the certs are procured
+# (DRIFT_BINARY_REWRITE_PLAN.md procurement parallel track).
+#
+# Run locally: `goreleaser release --snapshot --clean` (no publishing).
+# Run in CI: tagged push triggers .github/workflows/release.yml.
+
+version: 2
+
+project_name: drift
+
+before:
+  hooks:
+    - go mod tidy
+
+builds:
+  - id: drift
+    main: ./cmd/drift
+    binary: drift
+    env:
+      - CGO_ENABLED=0
+    flags:
+      - -trimpath
+    ldflags:
+      - -s -w -buildid=
+      - -X github.com/SHC-Labs/drift/internal/version.Version={{.Version}}
+      - -X github.com/SHC-Labs/drift/internal/version.Commit={{.ShortCommit}}
+      - -X github.com/SHC-Labs/drift/internal/version.BuildDate={{.CommitDate}}
+    goos:
+      - linux
+      - darwin
+      - windows
+    goarch:
+      - amd64
+      - arm64
+    ignore:
+      # Windows ARM64 deferred to v1.x. Customers on Windows ARM64 are
+      # rare; add when there's actual demand.
+      - goos: windows
+        goarch: arm64
+
+archives:
+  - id: drift
+    name_template: '{{ .ProjectName }}_{{ .Version }}_{{ .Os }}_{{ .Arch }}'
+    formats: ['tar.gz']
+    format_overrides:
+      - goos: windows
+        formats: ['zip']
+    files:
+      - LICENSE
+      - README.md
+      - CHANGELOG.md
+      - PRIVACY.md
+      - SECURITY.md
+
+checksum:
+  name_template: 'checksums.txt'
+  algorithm: sha256
+
+snapshot:
+  version_template: '{{ incpatch .Version }}-snapshot-{{ .ShortCommit }}'
+
+changelog:
+  disable: true  # CHANGELOG.md is hand-curated, see DEPRECATION.md policy
+
+# Cosign signing of every release artifact via GitHub Actions OIDC.
+# Public key is embedded in the next binary so auto-update can verify.
+signs:
+  - id: cosign
+    cmd: cosign
+    args:
+      - sign-blob
+      - '--yes'
+      - '--output-signature=${signature}'
+      - '${artifact}'
+    artifacts: archive
+    output: true
+
+# SBOM (software bill of materials) for supply-chain auditing.
+sboms:
+  - id: drift-sbom
+    artifacts: archive
+
+# Homebrew tap auto-publish. Tap repo lives at
+# github.com/SHC-Labs/homebrew-drift; release.yml's GH_PAT must have
+# write access to that repo.
+brews:
+  - name: drift
+    repository:
+      owner: SHC-Labs
+      name: homebrew-drift
+      branch: main
+    homepage: 'https://drift.io'
+    description: 'Drift coordination CLI + relay for AI agents working alongside humans'
+    license: 'MIT'
+    install: |
+      bin.install "drift"
+    test: |
+      system "#{bin}/drift", "--version"
+    commit_msg_template: 'drift v{{ .Version }}'
+
+# Winget manifest auto-submission. CI maintains a fork of
+# microsoft/winget-pkgs and opens a PR per release; manual approval
+# happens at the Microsoft side.
+winget:
+  - name: drift
+    publisher: SHC-Labs
+    license: MIT
+    short_description: 'Drift coordination CLI + relay'
+    publisher_url: 'https://drift.io'
+    publisher_support_url: 'https://drift.io/security'
+    package_identifier: 'SHC-Labs.drift'
+    homepage: 'https://drift.io'
+    repository:
+      owner: SHC-Labs
+      name: winget-pkgs
+      branch: drift-{{ .Version }}
+      pull_request:
+        enabled: true
+        base:
+          owner: microsoft
+          name: winget-pkgs
+          branch: master
+
+# Future additions (Sprint 4 cert procurement + post-launch demand):
+# - notarize: (Apple notarization once DEVELOPER_ID_APPLICATION cert lands)
+# - signs[]: Authenticode for Windows .exe (separate signtool step)
+# - nfpms: (.deb / .rpm packages for APT / DNF distribution)
+# - scoops: (Scoop bucket for Windows power users)

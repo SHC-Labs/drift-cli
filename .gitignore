@@ -1,0 +1,15 @@
+/dist/
+/build/
+*.exe
+drift
+drift-darwin-*
+drift-linux-*
+drift-windows-*
+*.sig
+*.cert
+.DS_Store
+*.swp
+.idea/
+.vscode/
+coverage.out
+coverage.html
