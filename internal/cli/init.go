@@ -56,6 +56,14 @@ func newUninitCmd() *cobra.Command {
 }
 
 func runInit(stdout, stderr io.Writer, mode string, deny []string) error {
+	return runInitFiltered(stdout, stderr, mode, deny, nil)
+}
+
+// runInitFiltered is runInit with an optional client allowlist. Used by
+// the quickstart wizard when the customer narrowed the multi-select to
+// a subset of detected clients. A nil/empty filter preserves the
+// current "set up every detected client" behavior.
+func runInitFiltered(stdout, stderr io.Writer, mode string, deny []string, only []clients.ClientID) error {
 	cwd, err := os.Getwd()
 	if err != nil {
 		return fmt.Errorf("getwd: %w", err)
@@ -103,7 +111,7 @@ func runInit(stdout, stderr io.Writer, mode string, deny []string) error {
 	// per-project config + hint file written. Claude Code gets hooks;
 	// the others get .cursorrules / AGENTS.md sections describing the
 	// drift_* tools the agent should call manually.
-	results, err := clients.SetupProject(projectDir, relayURL, exePath)
+	results, err := clients.SetupProjectFiltered(projectDir, relayURL, exePath, only)
 	if err != nil {
 		return fmt.Errorf("setup project: %w", err)
 	}

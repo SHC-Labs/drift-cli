@@ -4,6 +4,13 @@ All notable changes to drift get logged here. Format follows [Keep a Changelog](
 
 ## [Unreleased]
 
+### Added (v0.1.9)
+
+- `drift quickstart` now renders a full-screen TUI form when stdin is a real terminal: a welcome note, multi-select for the LLM clients to configure (with the FULL / AGENTS.MD / MCP-ONLY tier label next to each), text input for the project root, and a confirm step. Built on `github.com/charmbracelet/huh`. Customers hitting the install one-liner from their terminal see a real wizard instead of a wall of line prompts.
+- Inline-prompt path is preserved as the fallback. CI / scripted installs (no TTY) drop straight to plain `drift install`. A new `--inline` flag forces the line-prompt style on a TTY for debugging or low-fidelity remote shells. TUI failures (terminal can't render ANSI, etc.) auto-fall through to the inline path so customers always have a working installer.
+- Multi-select selections now actually filter which clients get per-project setup. `clients.SetupProjectFiltered(projectDir, relayURL, exePath, only []ClientID)` is the new entry point; `runInit` picked up a `runInitFiltered` variant that threads the filter from the wizard. v0.1.8's wizard listed clients but configured all of them regardless; v0.1.9 honors the user's checkbox toggles.
+- TUI welcome screen + step descriptions explain what each step does so customers don't have to guess.
+
 ### Added (v0.1.8)
 
 - New `drift quickstart` command. Guided wizard that runs after the install one-liner downloads the binary. Five steps: machine-level install, list of detected LLM clients with tier labels (FULL / AGENTS.MD / MCP-ONLY) matching the dashboard, project-root prompt, per-project setup with the existing `drift init` pipeline, and a relay verify step. Falls back to plain `drift install` when stdin isn't a TTY so CI/scripted installs keep working.

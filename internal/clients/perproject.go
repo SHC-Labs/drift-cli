@@ -36,7 +36,29 @@ type ProjectSetupResult struct {
 //     to call drift_* tools manually. Detect existing hint files and
 //     append non-destructively.
 func SetupProject(projectDir, relayURL, exePath string) ([]ProjectSetupResult, error) {
+	return SetupProjectFiltered(projectDir, relayURL, exePath, nil)
+}
+
+// SetupProjectFiltered is SetupProject limited to the client IDs in
+// `only`. A nil or empty slice behaves like SetupProject (no filtering;
+// every detected client gets per-project setup). The wizard uses this
+// when the customer explicitly opted out of some clients via the
+// multi-select form.
+func SetupProjectFiltered(projectDir, relayURL, exePath string, only []ClientID) ([]ProjectSetupResult, error) {
 	detected := DetectAll()
+	if len(only) > 0 {
+		allow := make(map[ClientID]bool, len(only))
+		for _, id := range only {
+			allow[id] = true
+		}
+		filtered := detected[:0]
+		for _, d := range detected {
+			if allow[d.ID] {
+				filtered = append(filtered, d)
+			}
+		}
+		detected = filtered
+	}
 	var results []ProjectSetupResult
 	for _, d := range detected {
 		r := setupOne(d, projectDir, relayURL, exePath)

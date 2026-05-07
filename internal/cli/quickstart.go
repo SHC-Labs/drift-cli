@@ -3,6 +3,7 @@ package cli
 import (
 	"bufio"
 	"context"
+	"errors"
 	"fmt"
 	"io"
 	"net/http"
@@ -11,6 +12,7 @@ import (
 	"strings"
 	"time"
 
+	"github.com/charmbracelet/huh"
 	"github.com/spf13/cobra"
 
 	"github.com/SHC-Labs/drift/internal/clients"
@@ -20,6 +22,7 @@ import (
 
 func newQuickstartCmd() *cobra.Command {
 	var noService bool
+	var forceInline bool
 	cmd := &cobra.Command{
 		Use:   "quickstart",
 		Short: "Guided setup wizard (the install one-liner runs this for you)",
@@ -28,27 +31,33 @@ with this command so a fresh install walks the user through machine
 setup, LLM client selection, project opt-in, and a verification hook
 fire without anyone needing to remember 'drift install' vs 'drift init'.
 
-Falls back to plain 'drift install' behavior when stdin isn't a TTY,
-so CI and scripted installs keep working unchanged.`,
+When stdin is a real TTY, runs a full-screen TUI form (multi-select,
+text input, progress) via charmbracelet/huh. When stdin is piped or
+redirected (CI), falls back to plain 'drift install' so scripted
+installs keep working unchanged.
+
+Use --inline to force the line-prompt style even on a TTY (useful for
+debugging or when the TUI doesn't render well over a remote shell).`,
 		RunE: func(cmd *cobra.Command, args []string) error {
-			return runQuickstart(cmd.OutOrStdout(), cmd.ErrOrStderr(), noService)
+			return runQuickstart(cmd.OutOrStdout(), cmd.ErrOrStderr(), noService, forceInline)
 		},
 	}
 	cmd.Flags().BoolVar(&noService, "no-service", false, "Skip OS service install/start (for sandboxed testing)")
+	cmd.Flags().BoolVar(&forceInline, "inline", false, "Use line-prompt style instead of the TUI form")
 	return cmd
 }
 
 // clientTier maps a client ID to one of three integration tiers that
 // the dashboard surfaces:
 //
-//   FULL      - MCP + auto-firing hooks (Claude Code only; hooks fire
-//               on every prompt and every Edit/Write)
-//   AGENTS.MD - MCP server + a rules file the agent reads (Cursor uses
-//               .cursorrules; Windsurf/Antigravity/Zed/Kilo/Kimi all
-//               use AGENTS.md; the customer's agent calls drift_*
-//               tools when prompted by the rules file)
-//   MCP-ONLY  - just the MCP server connection (VS Code, ChatGPT);
-//               the customer drives drift_* tool calls themselves
+//	FULL      - MCP + auto-firing hooks (Claude Code only; hooks fire
+//	            on every prompt and every Edit/Write)
+//	AGENTS.MD - MCP server + a rules file the agent reads (Cursor uses
+//	            .cursorrules; Windsurf/Antigravity/Zed/Kilo/Kimi all
+//	            use AGENTS.md; the customer's agent calls drift_*
+//	            tools when prompted by the rules file)
+//	MCP-ONLY  - just the MCP server connection (VS Code, ChatGPT);
+//	            the customer drives drift_* tool calls themselves
 func clientTier(id clients.ClientID) string {
 	switch id {
 	case clients.ClaudeCode:
@@ -61,58 +70,155 @@ func clientTier(id clients.ClientID) string {
 	}
 }
 
-func runQuickstart(stdout, stderr io.Writer, noService bool) error {
+func runQuickstart(stdout, stderr io.Writer, noService, forceInline bool) error {
+	// Non-TTY path: CI / scripted installs land here. Run plain install
+	// so the same one-liner keeps working in pipelines.
 	if !isInteractive() {
-		// CI / scripted installs land here. Fall back to plain
-		// non-interactive install so the same one-liner keeps working
-		// in pipelines.
 		fmt.Fprintln(stdout, "drift quickstart: non-interactive shell, running 'drift install' instead.")
 		return runInstall(stdout, stderr, "", false, false, noService)
 	}
+	if forceInline {
+		return runQuickstartInline(stdout, stderr, noService)
+	}
+	return runQuickstartTUI(stdout, stderr, noService)
+}
 
+// runQuickstartTUI is the polished form-based wizard. Uses huh for the
+// multi-select + text input + confirm. Falls back to runQuickstartInline
+// if the TUI fails to render (e.g. terminal doesn't support the ANSI
+// sequences huh expects).
+func runQuickstartTUI(stdout, stderr io.Writer, noService bool) error {
+	detected := clients.DetectAll()
+	if len(detected) == 0 {
+		// Nothing to multi-select; just run the install and tell the
+		// user to install a client + re-run quickstart.
+		fmt.Fprintln(stdout, "No LLM clients detected. Installing machine-level pieces only.")
+		fmt.Fprintln(stdout, "Install Claude Code, Cursor, Windsurf, etc., then re-run drift quickstart.")
+		return runInstall(stdout, stderr, "", false, false, noService)
+	}
+
+	// Build the multi-select options. Default-select all detected
+	// clients so the customer's first instinct (hit enter) does the
+	// right thing for the common case where they want everything wired.
+	options := make([]huh.Option[string], 0, len(detected))
+	for _, d := range detected {
+		label := fmt.Sprintf("%s  [%s]", d.ID, clientTier(d.ID))
+		options = append(options, huh.NewOption(label, string(d.ID)).Selected(true))
+	}
+
+	cwd, _ := os.Getwd()
+	home, _ := config.Home()
+	defaultProject := cwd
+	skipProject := false
+	if cwd == home || cwd == "/" || cwd == "" {
+		// Looks like the customer ran the wizard from their home dir
+		// or some non-project location. Keep the default empty so the
+		// project-root prompt forces a deliberate choice.
+		defaultProject = ""
+	}
+
+	selected := make([]string, 0, len(options))
+	projectRoot := defaultProject
+	confirmGo := true
+
+	form := huh.NewForm(
+		huh.NewGroup(
+			huh.NewNote().
+				Title("Drift Setup").
+				Description("This wizard will:\n  1. Install machine-level pieces (token, MCP, service)\n  2. Configure your LLM client(s)\n  3. Opt a project into Drift\n  4. Verify with a test hook\n\nPress enter to continue."),
+		),
+		huh.NewGroup(
+			huh.NewMultiSelect[string]().
+				Title("Pick LLM clients to configure").
+				Description("FULL = MCP + auto-firing hooks\nAGENTS.MD = MCP + a rules file the agent reads\nMCP-ONLY = just the MCP server connection").
+				Options(options...).
+				Value(&selected).
+				Filterable(false),
+		),
+		huh.NewGroup(
+			huh.NewInput().
+				Title("Project root to opt into Drift").
+				Description("Press enter to skip the per-project step.").
+				Value(&projectRoot).
+				Validate(validateProjectRoot),
+		),
+		huh.NewGroup(
+			huh.NewConfirm().
+				Title("Ready to install?").
+				Description("Drift will configure the selected client(s) and opt the project in.").
+				Affirmative("Install").
+				Negative("Cancel").
+				Value(&confirmGo),
+		),
+	)
+
+	if err := form.Run(); err != nil {
+		// huh returns ErrUserAborted on ESC. Treat as a clean cancel.
+		if errors.Is(err, huh.ErrUserAborted) {
+			fmt.Fprintln(stdout, "Cancelled.")
+			return nil
+		}
+		// Other errors: TUI didn't work. Drop to the inline wizard so
+		// the customer still has a path forward.
+		fmt.Fprintf(stderr, "Note: TUI form failed (%v); falling back to inline prompts.\n", err)
+		return runQuickstartInline(stdout, stderr, noService)
+	}
+
+	if !confirmGo {
+		fmt.Fprintln(stdout, "Cancelled.")
+		return nil
+	}
+	if projectRoot == "" {
+		skipProject = true
+	}
+
+	// Convert the selected []string of client IDs back to []clients.ClientID
+	// so SetupProjectFiltered can use it.
+	only := make([]clients.ClientID, 0, len(selected))
+	for _, s := range selected {
+		only = append(only, clients.ClientID(s))
+	}
+
+	return runWizardSteps(stdout, stderr, noService, projectRoot, skipProject, only)
+}
+
+// runQuickstartInline is the line-prompt fallback wizard. Same flow as
+// the TUI; just no boxes or arrow-key navigation. Used by --inline and
+// when the TUI fails to render.
+func runQuickstartInline(stdout, stderr io.Writer, noService bool) error {
 	in := bufio.NewReader(os.Stdin)
 
 	fmt.Fprintln(stdout, "============================================================")
 	fmt.Fprintln(stdout, "   Drift quickstart — guided setup")
 	fmt.Fprintln(stdout, "============================================================")
 
-	// Step 1: machine-level install. runInstall handles token, ~/.mcp.json,
-	// service registration, and per-detected-client config writes. The
-	// wizard is a thin prompt layer on top.
-	section(stdout, 1, 5, "Installing machine-level pieces")
-	if err := runInstall(stdout, stderr, "", false, false, noService); err != nil {
-		return fmt.Errorf("install step: %w", err)
-	}
-
-	// Step 2: surface what got detected so the customer knows what's
-	// about to be configured per-project + understands the tier system
-	// they see in the dashboard.
-	section(stdout, 2, 5, "LLM clients detected on this machine")
 	detected := clients.DetectAll()
+	section(stdout, 1, 4, "LLM clients detected on this machine")
 	if len(detected) == 0 {
 		fmt.Fprintln(stdout, "  None detected.")
-		fmt.Fprintln(stdout, "  Install Claude Code, Cursor, Windsurf, VS Code, etc., then re-run drift quickstart.")
-		fmt.Fprintln(stdout, "")
-		return nil
+	} else {
+		for _, d := range detected {
+			fmt.Fprintf(stdout, "  - %-15s [%s]  %s\n", d.ID, clientTier(d.ID), d.ConfigPath)
+		}
 	}
+	only := make([]clients.ClientID, 0, len(detected))
 	for _, d := range detected {
-		fmt.Fprintf(stdout, "  - %-15s [%s]  %s\n", d.ID, clientTier(d.ID), d.ConfigPath)
+		ok, err := promptYesNo(stdout, in, fmt.Sprintf("  Configure %s?", d.ID), true)
+		if err != nil {
+			return err
+		}
+		if ok {
+			only = append(only, d.ID)
+		}
 	}
-	fmt.Fprintln(stdout, "")
-	fmt.Fprintln(stdout, "Tier reference:")
-	fmt.Fprintln(stdout, "  FULL      = MCP + auto-firing hooks (no manual tool calls needed)")
-	fmt.Fprintln(stdout, "  AGENTS.MD = MCP + a rules file the agent reads on every session")
-	fmt.Fprintln(stdout, "  MCP-ONLY  = just the MCP server; you call drift_* tools manually")
 
-	// Step 3: pick a project root for per-project setup. Default to
-	// $PWD; if $PWD is the customer's home dir, suggest skipping.
-	section(stdout, 3, 5, "Pick a project to opt into Drift coordination")
+	section(stdout, 2, 4, "Pick a project to opt into Drift")
 	cwd, _ := os.Getwd()
 	home, _ := config.Home()
 	defaultProj := cwd
 	if cwd == home || cwd == "/" || cwd == "" {
-		fmt.Fprintln(stdout, "  Your current directory looks like a home dir, not a project.")
-		fmt.Fprintln(stdout, "  cd into a project root, OR enter a path below, OR press enter to skip.")
+		fmt.Fprintln(stdout, "  Your current directory looks like a home dir.")
+		fmt.Fprintln(stdout, "  Enter a project path or hit enter to skip.")
 		defaultProj = ""
 	}
 	projectRoot, err := promptString(stdout, in, "  Project root", defaultProj)
@@ -120,39 +226,49 @@ func runQuickstart(stdout, stderr io.Writer, noService bool) error {
 		return err
 	}
 	projectRoot = expandPath(projectRoot, home)
-	if projectRoot == "" {
+	skipProject := projectRoot == ""
+
+	return runWizardSteps(stdout, stderr, noService, projectRoot, skipProject, only)
+}
+
+// runWizardSteps is the shared post-prompt phase for both the TUI and
+// inline wizards: install + project setup + multi-project legacy scan
+// + relay verify. Both paths feed it the same parameters.
+func runWizardSteps(stdout, stderr io.Writer, noService bool, projectRoot string, skipProject bool, only []clients.ClientID) error {
+	section(stdout, 1, 4, "Installing machine-level pieces")
+	if err := runInstall(stdout, stderr, "", false, false, noService); err != nil {
+		return fmt.Errorf("install step: %w", err)
+	}
+
+	if skipProject {
 		fmt.Fprintln(stdout, "")
-		fmt.Fprintln(stdout, "Skipping per-project setup. To opt a project in later:")
-		fmt.Fprintln(stdout, "    cd <project-root> && drift init")
+		fmt.Fprintln(stdout, "No project chosen. Run 'drift init' inside any project root to opt it in later.")
 		return nil
 	}
+
 	if st, sterr := os.Stat(projectRoot); sterr != nil || !st.IsDir() {
 		return fmt.Errorf("project root %q is not a directory", projectRoot)
 	}
 
-	// Step 4: per-project setup. Reuse the existing drift init pipeline
-	// by chdir-ing to the chosen project and calling runInit. The
-	// wizard's "remove legacy bash-CLI hooks" win comes for free now
-	// that upsertHookEntry replaces untagged drift-* entries.
-	section(stdout, 4, 5, "Setting up "+projectRoot)
-	if err := runInitInDir(stdout, stderr, projectRoot); err != nil {
+	section(stdout, 2, 4, "Setting up "+projectRoot)
+	if err := runInitInDirFiltered(stdout, stderr, projectRoot, only); err != nil {
 		return fmt.Errorf("project setup: %w", err)
 	}
 
 	// Multi-project legacy scan. Walk ~/.claude/projects/ for other
-	// projects that still have legacy bash-CLI hooks (drift-check.bat
-	// etc.) and offer batch migration.
-	migrated, scanErr := scanAndOfferLegacyMigration(stdout, in, projectRoot)
+	// project roots that still have legacy bash-CLI hooks and offer
+	// batch migration. Best-effort; failures don't abort the wizard.
+	section(stdout, 3, 4, "Scan for other projects with legacy hooks")
+	migrated, scanErr := scanAndOfferLegacyMigrationAuto(stdout, projectRoot)
 	if scanErr != nil {
 		fmt.Fprintf(stderr, "Note: legacy scan failed: %v\n", scanErr)
 	} else if migrated > 0 {
 		fmt.Fprintf(stdout, "  ✓ Migrated legacy hooks across %d other project(s).\n", migrated)
+	} else {
+		fmt.Fprintln(stdout, "  No other projects need migration.")
 	}
 
-	// Step 5: verify by firing a hook against the local relay. Skips
-	// silently if --no-service was set since there's no relay to talk
-	// to.
-	section(stdout, 5, 5, "Verify the install with a test hook")
+	section(stdout, 4, 4, "Verify the install with a test hook")
 	if noService {
 		fmt.Fprintln(stdout, "  Service install was skipped; can't verify against the relay.")
 	} else {
@@ -169,10 +285,10 @@ func runQuickstart(stdout, stderr io.Writer, noService bool) error {
 	return nil
 }
 
-// runInitInDir is runInit but for an explicit project dir rather than
-// cwd. Used by the wizard so the customer doesn't have to cd into the
-// project before running quickstart.
-func runInitInDir(stdout, stderr io.Writer, projectDir string) error {
+// runInitInDirFiltered runs the equivalent of `drift init` in projectDir
+// with the given client allowlist. Saves the wizard from forcing the
+// customer to cd into the project before launching.
+func runInitInDirFiltered(stdout, stderr io.Writer, projectDir string, only []clients.ClientID) error {
 	prevCwd, err := os.Getwd()
 	if err != nil {
 		return err
@@ -181,19 +297,15 @@ func runInitInDir(stdout, stderr io.Writer, projectDir string) error {
 		return fmt.Errorf("cd %s: %w", projectDir, err)
 	}
 	defer func() { _ = os.Chdir(prevCwd) }()
-	return runInit(stdout, stderr, "default", nil)
+	return runInitFiltered(stdout, stderr, "default", nil, only)
 }
 
-// scanAndOfferLegacyMigration walks ~/.claude/projects/ to find any
-// other project roots that have a legacy bash-CLI hook entry in their
-// .claude/settings.local.json (drift-check.bat / drift-report.bat / sh
-// / mjs). Offers batch migration via the same upsertHookEntry path
-// drift init already uses. Returns the number of projects touched.
-//
-// Skips the project the wizard just set up (already migrated) and
-// projects with no settings.local.json. Best-effort: errors are
-// surfaced as warnings but don't abort the wizard.
-func scanAndOfferLegacyMigration(stdout io.Writer, in *bufio.Reader, justSetUp string) (int, error) {
+// scanAndOfferLegacyMigrationAuto walks ~/.claude/projects/ to find any
+// other project roots that have a legacy bash-CLI hook entry. Migrates
+// them automatically (no second prompt — the customer already opted into
+// the wizard, asking again per-project is annoying). Returns count of
+// projects touched.
+func scanAndOfferLegacyMigrationAuto(stdout io.Writer, justSetUp string) (int, error) {
 	home, err := config.Home()
 	if err != nil {
 		return 0, nil
@@ -205,15 +317,6 @@ func scanAndOfferLegacyMigration(stdout io.Writer, in *bufio.Reader, justSetUp s
 	}
 	candidates, err := findProjectsWithLegacyHooks(projectsDir, justSetUp)
 	if err != nil || len(candidates) == 0 {
-		return 0, err
-	}
-	fmt.Fprintln(stdout, "")
-	fmt.Fprintln(stdout, "Other projects with legacy bash-CLI drift hooks:")
-	for _, p := range candidates {
-		fmt.Fprintf(stdout, "  - %s\n", p)
-	}
-	ok, err := promptYesNo(stdout, in, "  Migrate these to the Go binary's hooks?", true)
-	if err != nil || !ok {
 		return 0, err
 	}
 	exePath, err := os.Executable()
@@ -246,9 +349,6 @@ func findProjectsWithLegacyHooks(projectsDir, skip string) ([]string, error) {
 		if !e.IsDir() {
 			continue
 		}
-		// Claude Code's project-state dir name is the project root
-		// path with separators replaced by '-'. Reverse the slug to
-		// recover the candidate root.
 		root := unslugProjectName(e.Name())
 		if root == "" || root == skip {
 			continue
@@ -266,9 +366,6 @@ func findProjectsWithLegacyHooks(projectsDir, skip string) ([]string, error) {
 // names that don't match the expected shape (returns empty string).
 func unslugProjectName(name string) string {
 	if !strings.HasPrefix(name, "-") {
-		// Non-Unix project root path (Windows starts with a drive
-		// letter, e.g. "C--Users-..."). The exact unslugging logic
-		// for Windows differs; defer to the next round.
 		return ""
 	}
 	return strings.ReplaceAll(name, "-", "/")
@@ -292,11 +389,9 @@ func hasLegacyDriftHook(settingsPath string) bool {
 	return false
 }
 
-// verifyRelayWarmup hits the local relay's /health and fires one
-// prompt-submit hook against the freshly-set-up project so the
-// customer sees the live <drift-context> output before the wizard
-// exits. Soft-fails: warns but doesn't abort the wizard if the relay
-// isn't ready yet.
+// verifyRelayWarmup hits the local relay's /health and prints a
+// confirmation. Soft-fails: warns but doesn't abort the wizard if the
+// relay isn't ready yet.
 func verifyRelayWarmup(stdout, stderr io.Writer, projectDir string) {
 	port, err := ipc.CurrentPort()
 	if err != nil || port == 0 {
@@ -304,8 +399,6 @@ func verifyRelayWarmup(stdout, stderr io.Writer, projectDir string) {
 		return
 	}
 
-	// Wait up to 5s for /health to come up. The service starts async
-	// so a fresh install may take a beat to bind.
 	healthURL := fmt.Sprintf("http://127.0.0.1:%d/health", port)
 	healthy := false
 	deadline := time.Now().Add(5 * time.Second)
@@ -329,11 +422,25 @@ func verifyRelayWarmup(stdout, stderr io.Writer, projectDir string) {
 		return
 	}
 	fmt.Fprintf(stdout, "  ✓ Relay listening on 127.0.0.1:%d\n", port)
-	// Skip the actual hook-fire-and-render step here for now — that
-	// path requires invoking the binary recursively which complicates
-	// the stdio setup. The customer's first real prompt will exercise
-	// the chain end-to-end.
 	fmt.Fprintln(stdout, "  ✓ Open your LLM client to fire the first <drift-context>.")
+}
+
+// validateProjectRoot is the huh.Input.Validate callback for the
+// project-root field. Empty string is acceptable (means "skip
+// per-project step"); non-empty must point at an existing directory.
+func validateProjectRoot(s string) error {
+	s = strings.TrimSpace(s)
+	if s == "" {
+		return nil
+	}
+	home, _ := config.Home()
+	if strings.HasPrefix(s, "~") {
+		s = filepath.Join(home, strings.TrimPrefix(s, "~"))
+	}
+	if _, err := os.Stat(s); err != nil {
+		return fmt.Errorf("path not found: %s", s)
+	}
+	return nil
 }
 
 // expandPath resolves a leading ~ to the customer's home dir and
