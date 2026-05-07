@@ -4,7 +4,7 @@
 // service status, last 50 log lines.
 //
 // Customers fix 80% of their own problems with this dump. The other
-// 20% paste it to support@driftlabs.io.
+// 20% paste it to hello@driftlabs.io.
 package doctor
 
 import (
@@ -295,7 +295,7 @@ func FormatText(r Report) string {
 		sb.WriteString("\n")
 	}
 
-	sb.WriteString("Paste this output to support@driftlabs.io if you need help.\n")
+	sb.WriteString("Paste this output to hello@driftlabs.io if you need help.\n")
 	return sb.String()
 }
 

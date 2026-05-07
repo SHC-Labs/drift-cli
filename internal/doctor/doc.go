@@ -4,5 +4,5 @@
 // (kardianos.Status()), last 50 log lines from ~/.drift/logs/drift.log.
 //
 // Customers fix 80% of their own problems with this; the rest paste the
-// output to support@driftlabs.io.
+// output to hello@driftlabs.io.
 package doctor

@@ -2,7 +2,7 @@
 
 ## Reporting a vulnerability
 
-Email `security@driftlabs.io` with the details. We respond within 48 hours.
+Email `hello@driftlabs.io` with the details. We respond within 48 hours.
 
 GPG-encrypt sensitive reports with our public key (key fingerprint published on https://drift.io/security and in the binary's `drift doctor --json` output under `security_contact`).
 
@@ -22,7 +22,7 @@ In scope:
 - The four `/api/install/*` endpoints the binary calls
 
 Out of scope (file with the relevant team instead):
-- Drift dashboard server (`mcp.driftlabs.io`): contact `security@driftlabs.io` with the same address but indicate "dashboard"
+- Drift dashboard server (`mcp.driftlabs.io`): contact `hello@driftlabs.io` with the same address but indicate "dashboard"
 - Third-party MCP clients (Claude Code, Cursor, etc.)
 - Third-party Go dependencies (file with upstream, then with us if it affects our threat model)
 

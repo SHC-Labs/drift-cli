@@ -75,17 +75,38 @@ try {
     Move-Item -Path $exeSrc -Destination $exeDst -Force
     Log "installed to $exeDst"
 
-    # Add install dir to User PATH (persistent) and to the current
-    # session's $env:PATH so the binary is callable immediately. Without
-    # the in-session update, drift install below works (called by full
-    # path), but `drift status` from a fresh prompt would say "command
-    # not found" until the user opens a new shell.
+    # Add install dir to User PATH (persistent), broadcast the change
+    # so explorer.exe picks up the new value (otherwise newly-spawned
+    # PowerShell windows inherit explorer's stale env cache and don't
+    # see the new PATH), and update the current session's $env:PATH so
+    # `drift install` below + `drift status` from this same window both
+    # work without restarting the shell.
     $userPath = [Environment]::GetEnvironmentVariable('PATH', 'User')
     if ($userPath -notlike "*$DriftInstallDir*") {
         $newUserPath = if ($userPath) { "$userPath;$DriftInstallDir" } else { $DriftInstallDir }
         try {
             [Environment]::SetEnvironmentVariable('PATH', $newUserPath, 'User')
             Log "added $DriftInstallDir to User PATH (persistent)"
+            # Broadcast WM_SETTINGCHANGE so explorer reloads the User
+            # env block. Without this, new shells see the OLD PATH for
+            # the rest of the explorer session (until a logout/login or
+            # explorer restart). 5s timeout, abort-if-hung flag.
+            try {
+                if (-not ('Win32.NativeMethods' -as [Type])) {
+                    Add-Type -Namespace Win32 -Name NativeMethods -MemberDefinition @'
+[System.Runtime.InteropServices.DllImport("user32.dll", SetLastError=true, CharSet=System.Runtime.InteropServices.CharSet.Auto)]
+public static extern System.IntPtr SendMessageTimeout(System.IntPtr hWnd, uint Msg, System.UIntPtr wParam, string lParam, uint fuFlags, uint uTimeout, out System.UIntPtr lpdwResult);
+'@
+                }
+                $HWND_BROADCAST   = [IntPtr]0xffff
+                $WM_SETTINGCHANGE = 0x1A
+                $SMTO_ABORTIFHUNG = 0x0002
+                $result = [UIntPtr]::Zero
+                [Win32.NativeMethods]::SendMessageTimeout($HWND_BROADCAST, $WM_SETTINGCHANGE, [UIntPtr]::Zero, 'Environment', $SMTO_ABORTIFHUNG, 5000, [ref]$result) | Out-Null
+                Log "broadcast PATH change to running processes"
+            } catch {
+                Log "WARNING: PATH broadcast failed (new shells may need a logout/login): $_"
+            }
         } catch {
             Log "WARNING: could not auto-add $DriftInstallDir to User PATH: $_"
             Log "  Add it manually with:"

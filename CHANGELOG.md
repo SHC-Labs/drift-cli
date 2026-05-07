@@ -4,6 +4,14 @@ All notable changes to drift get logged here. Format follows [Keep a Changelog](
 
 ## [Unreleased]
 
+### Fixed (v0.1.7 hotfix)
+
+- Service install on Windows no longer hard-fails when PowerShell isn't elevated. v0.1.4-v0.1.6 returned "Access is denied" and told the customer to "fix the error and re-run", which is hostile. v0.1.7 detects the access-denied error and falls back to a user-mode autostart: drops a `drift-relay.cmd` launcher in `%APPDATA%\Microsoft\Windows\Start Menu\Programs\Startup\` and launches the relay process detached so the current session works without logout/login. Customers who want a real Windows Service (auto-restart on crash, system-wide persistence) can re-run `drift install` from an elevated PowerShell. New build-tagged files `internal/service/install_user_windows.go` and `internal/service/install_user_other.go`.
+- `install.ps1` now broadcasts `WM_SETTINGCHANGE` after writing the User PATH so explorer.exe reloads its environment block. Without the broadcast, newly-spawned PowerShell windows inherit explorer's stale PATH cache and don't see the new install dir until logout/login. Adds `Add-Type` for `SendMessageTimeout` and a `WM_SETTINGCHANGE` broadcast to `HWND_BROADCAST` with a 5s `SMTO_ABORTIFHUNG` timeout.
+- Customer-facing email standardized to `hello@driftlabs.io` everywhere. Removes split between `support@` (general) and `security@` (vuln disclosures); both now route through the single inbox. Touched `internal/cli/install.go`, `internal/cli/status.go`, `internal/doctor/doctor.go`, `internal/doctor/doc.go`, `PRIVACY.md`, `SECURITY.md`. v0.1.4-v0.1.6 had the wrong address baked into install postface and doctor footer.
+
+Note: Windows-specific changes here couldn't be exercised end-to-end from the Linux build host. Cross-compile confirms the binary builds; the Startup-folder fallback and `WM_SETTINGCHANGE` broadcast both need a Windows test pass before they're presumed working.
+
 ### Fixed (v0.1.6 hotfix)
 
 - Cap the `/api/check-updates` response body at 64KB before rendering it inside the `<drift-context>` block. A hostile or compromised upstream returning a 5MB activity feed would otherwise flood the LLM context window and the customer's terminal. Truncation appends `[truncated: server response exceeded body cap]` so the LLM knows content was dropped (`internal/hook/check.go`).

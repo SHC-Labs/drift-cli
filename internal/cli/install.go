@@ -218,8 +218,27 @@ func runInstall(stdout, stderr io.Writer, customURL string, unsafeURL, keepLegac
 
 	if !noService {
 		if err := service.Install(); err != nil {
-			fmt.Fprintf(stderr, "Note: service install failed: %v\n", err)
-			fmt.Fprintln(stderr, "      Re-run with --no-service to skip, or fix the error and re-run drift install.")
+			// Windows path: kardianos service install fails with
+			// "Access is denied" when PowerShell isn't elevated. Don't
+			// bail out and leave the customer stuck. Drop a .cmd
+			// launcher in the Startup folder so the relay starts on
+			// login, and launch it now so this session works too.
+			// Customers who want a real Windows Service (auto-restart,
+			// system-wide) can re-run drift install with admin.
+			if service.IsAccessDenied(err) {
+				cmdPath, ferr := service.InstallUserMode()
+				switch {
+				case ferr != nil:
+					fmt.Fprintf(stderr, "Note: service install needs admin AND user-mode fallback failed: %v\n", ferr)
+					fmt.Fprintln(stderr, "      Re-run PowerShell as admin and try again, or use --no-service to skip.")
+				default:
+					fmt.Fprintf(stdout, "Installed user-mode autostart at %s and launched the relay.\n", cmdPath)
+					fmt.Fprintln(stdout, "      For a real Windows Service (auto-restart on crash, system-wide), re-run as admin.")
+				}
+			} else {
+				fmt.Fprintf(stderr, "Note: service install failed: %v\n", err)
+				fmt.Fprintln(stderr, "      Re-run with --no-service to skip, or fix the error and re-run drift install.")
+			}
 		} else {
 			fmt.Fprintln(stdout, "Registered drift as a system service.")
 			if err := service.Start(); err != nil {
@@ -242,7 +261,7 @@ func runInstall(stdout, stderr io.Writer, customURL string, unsafeURL, keepLegac
 
 	fmt.Fprintln(stdout, "")
 	fmt.Fprintln(stdout, "Done. Next step: run 'drift init' inside any project root you want Drift coordination on.")
-	fmt.Fprintln(stdout, "If anything breaks, run `drift doctor` and paste output to support@driftlabs.io.")
+	fmt.Fprintln(stdout, "If anything breaks, run `drift doctor` and paste output to hello@driftlabs.io.")
 	return nil
 }
 

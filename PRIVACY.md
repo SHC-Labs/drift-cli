@@ -56,7 +56,7 @@ When opted out, the binary skips all four install state event POSTs.
 
 ## Data deletion
 
-Email `support@driftlabs.io` with your `install_id` (find it via `drift doctor --json`). Server deletes the corresponding rows from `installs` and `client_connections` within 30 days. Cascade delete also runs when your org is closed.
+Email `hello@driftlabs.io` with your `install_id` (find it via `drift doctor --json`). Server deletes the corresponding rows from `installs` and `client_connections` within 30 days. Cascade delete also runs when your org is closed.
 
 ## Changes to this policy
 

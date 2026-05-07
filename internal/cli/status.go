@@ -41,7 +41,7 @@ func newDoctorCmd() *cobra.Command {
 		Short: "Verbose diagnostics dump for support tickets",
 		Long: `Prints binary version, server reachability, token validity, project status,
 per-client hook health, service status, last 50 log lines. Pipe the output
-to support@driftlabs.io and most support tickets resolve themselves.
+to hello@driftlabs.io and most support tickets resolve themselves.
 
 --json emits the same data as a structured JSON document for automated
 collection (CI, support form, etc).`,
