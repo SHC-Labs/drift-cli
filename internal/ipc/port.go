@@ -3,7 +3,9 @@ package ipc
 import (
 	"crypto/rand"
 	"encoding/binary"
+	"errors"
 	"fmt"
+	"io"
 
 	"github.com/SHC-Labs/drift/internal/config"
 )
@@ -29,7 +31,22 @@ const (
 // EnsurePort just reserves the customer's port number; the hardened
 // bind in BindHardened is what fails loud on conflict.
 func EnsurePort() (int, error) {
+	return EnsurePortRecovering(io.Discard)
+}
+
+// EnsurePortRecovering is EnsurePort that prints a recovery notice to
+// the supplied writer if it has to back up a corrupt config. drift
+// install uses this so the customer sees what happened.
+func EnsurePortRecovering(notify io.Writer) (int, error) {
 	cfg, err := config.ReadBinaryConfig()
+	if errors.Is(err, config.ErrConfigCorrupt) {
+		backup, berr := config.BackupCorruptBinaryConfig()
+		if berr != nil {
+			return 0, fmt.Errorf("read binary config: %w (backup also failed: %v)", err, berr)
+		}
+		fmt.Fprintf(notify, "drift install: binary config was corrupt; backed up to %s and rebuilding fresh.\n", backup)
+		cfg, err = config.ReadBinaryConfig()
+	}
 	if err != nil {
 		return 0, fmt.Errorf("read binary config: %w", err)
 	}

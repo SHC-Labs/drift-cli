@@ -117,6 +117,9 @@ if command -v cosign >/dev/null 2>&1; then
 fi
 
 # Extract.
+if [ -e "$DRIFT_INSTALL_DIR" ] && [ ! -d "$DRIFT_INSTALL_DIR" ]; then
+    fatal "DRIFT_INSTALL_DIR ($DRIFT_INSTALL_DIR) exists but is not a directory"
+fi
 mkdir -p "$DRIFT_INSTALL_DIR"
 tar -xzf "$TMPDIR/$ARCHIVE" -C "$TMPDIR"
 mv "$TMPDIR/drift" "$DRIFT_INSTALL_DIR/drift"

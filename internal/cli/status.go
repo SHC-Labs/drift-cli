@@ -2,6 +2,7 @@ package cli
 
 import (
 	"context"
+	"errors"
 	"fmt"
 	"io"
 	"net/http"
@@ -56,7 +57,7 @@ collection (CI, support form, etc).`,
 }
 
 func runStatus(stdout io.Writer) error {
-	port, _ := ipc.CurrentPort()
+	port, portErr := ipc.CurrentPort()
 	tokenPresent := false
 	if v, err := keychain.GetToken(); err == nil && v != "" {
 		tokenPresent = true
@@ -78,10 +79,13 @@ func runStatus(stdout io.Writer) error {
 
 	fmt.Fprintln(stdout, "drift status")
 	fmt.Fprintf(stdout, "  service:       %s\n", svcState)
-	if port > 0 {
+	switch {
+	case errors.Is(portErr, config.ErrConfigCorrupt):
+		fmt.Fprintf(stdout, "  relay port:    config corrupt at %s (run 'drift install' to repair)\n", config.BinaryConfigPath())
+	case port > 0:
 		fmt.Fprintf(stdout, "  relay port:    %d\n", port)
 		fmt.Fprintf(stdout, "  relay health:  %s\n", boolStr(relayHealthy, "up", "down"))
-	} else {
+	default:
 		fmt.Fprintln(stdout, "  relay port:    not set (run 'drift install')")
 	}
 	fmt.Fprintf(stdout, "  ~/.mcp.json:   %s\n", boolStr(mcpPresent, "present", "missing"))

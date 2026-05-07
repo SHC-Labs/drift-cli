@@ -121,8 +121,9 @@ func runInstall(stdout, stderr io.Writer, customURL string, unsafeURL, keepLegac
 
 	// Reserve a stable random port for the relay. Sticky for the install's
 	// lifetime: once chosen, never changes. The relay binds this via
-	// ipc.BindHardened when the service starts.
-	port, err := ipc.EnsurePort()
+	// ipc.BindHardened when the service starts. Auto-recovers from a
+	// corrupt config by backing up the bad file and rewriting fresh.
+	port, err := ipc.EnsurePortRecovering(stdout)
 	if err != nil {
 		return fmt.Errorf("reserve relay port: %w", err)
 	}

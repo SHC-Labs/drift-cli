@@ -49,15 +49,17 @@ func ValidateToken(token string) (version string, err error) {
 			return "", fmt.Errorf("%w: empty payload after %sv1_", ErrTokenFormat, TokenPrefix)
 		}
 		if !isTokenPayload(payload) {
-			return "", fmt.Errorf("%w: v1 payload must be base64url chars (A-Za-z0-9_-), got %q", ErrTokenFormat, payload)
+			return "", fmt.Errorf("%w: v1 payload must be base64url chars (A-Za-z0-9_-), got %d-char value (%s)", ErrTokenFormat, len(payload), redactToken(payload))
 		}
 		return "v1", nil
 	}
 
 	// Reject anything that LOOKS versioned but isn't recognized.
-	// drift_v2_..., drift_v9_..., drift_vX_... all fail strictly.
+	// drift_v2_..., drift_v9_..., drift_vX_... all fail strictly. The
+	// version prefix shape is what we report; the payload portion stays
+	// redacted so error logs and support tickets don't leak the token.
 	if looksVersioned(rest) {
-		return "", fmt.Errorf("%w: unknown version prefix in %q (this binary handles v1 only)", ErrTokenFormat, token)
+		return "", fmt.Errorf("%w: unknown version prefix %s_ (this binary handles v1 only)", ErrTokenFormat, versionPrefix(rest))
 	}
 
 	// Implicit v1: drift_<base64url>. The dashboard generates these as
@@ -65,12 +67,35 @@ func ValidateToken(token string) (version string, err error) {
 	// charset A-Za-z0-9_-. Accept if charset is right and length is at
 	// least 16.
 	if !isTokenPayload(rest) {
-		return "", fmt.Errorf("%w: payload must be base64url chars (A-Za-z0-9_-), got %q", ErrTokenFormat, rest)
+		return "", fmt.Errorf("%w: payload must be base64url chars (A-Za-z0-9_-), got %d-char value (%s)", ErrTokenFormat, len(rest), redactToken(rest))
 	}
 	if len(rest) < 16 {
 		return "", fmt.Errorf("%w: token too short (%d chars, want 16+)", ErrTokenFormat, len(rest))
 	}
 	return "legacy", nil
+}
+
+// redactToken returns a short fingerprint of a token payload suitable
+// for error messages, log lines, and support tickets. Echoes the first
+// 4 and last 2 chars; replaces the middle with "...". Anything 8 chars
+// or shorter is fully starred to avoid leaking enough to brute-force.
+func redactToken(s string) string {
+	if len(s) <= 8 {
+		return strings.Repeat("*", len(s))
+	}
+	return s[:4] + "..." + s[len(s)-2:]
+}
+
+// versionPrefix returns the leading "v<digits><alpha>" run from the
+// post-prefix string up to but not including the first '_'. Used in the
+// unknown-version error so the message names the prefix the user typed
+// without leaking the random payload that follows. Falls back to a
+// short fingerprint when no '_' is present.
+func versionPrefix(rest string) string {
+	if i := strings.Index(rest, "_"); i >= 0 {
+		return rest[:i]
+	}
+	return redactToken(rest)
 }
 
 // isTokenPayload returns true if s contains only base64url chars

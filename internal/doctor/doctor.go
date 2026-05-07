@@ -10,6 +10,7 @@ package doctor
 import (
 	"context"
 	"encoding/json"
+	"errors"
 	"fmt"
 	"io"
 	"net/http"
@@ -66,6 +67,7 @@ type RelayInfo struct {
 	Port         int    `json:"port"`
 	HealthOK     bool   `json:"health_ok"`
 	HealthDetail string `json:"health_detail,omitempty"`
+	ConfigError  string `json:"config_error,omitempty"` // populated when ~/.drift/config.json is corrupt
 }
 
 type TokenInfo struct {
@@ -126,7 +128,11 @@ func Run(ctx context.Context, recentLogLines int) Report {
 		r.Service = ServiceInfo{State: state}
 	}
 
-	if port, err := ipc.CurrentPort(); err == nil && port > 0 {
+	port, portErr := ipc.CurrentPort()
+	switch {
+	case errors.Is(portErr, config.ErrConfigCorrupt):
+		r.Relay.ConfigError = portErr.Error()
+	case port > 0:
 		r.Relay.Port = port
 		r.Relay.HealthOK, r.Relay.HealthDetail = probeHealth(ctx, port)
 	}
@@ -206,13 +212,17 @@ func FormatText(r Report) string {
 	sb.WriteString("\n")
 
 	sb.WriteString("relay\n")
-	if r.Relay.Port > 0 {
+	switch {
+	case r.Relay.ConfigError != "":
+		fmt.Fprintf(&sb, "  port:         CONFIG CORRUPT: %s\n", r.Relay.ConfigError)
+		sb.WriteString("                run 'drift install' to back up the bad file and rebuild fresh\n")
+	case r.Relay.Port > 0:
 		fmt.Fprintf(&sb, "  port:         127.0.0.1:%d\n", r.Relay.Port)
 		fmt.Fprintf(&sb, "  health:       %s\n", boolStr(r.Relay.HealthOK, "up", "down"))
 		if r.Relay.HealthDetail != "" {
 			fmt.Fprintf(&sb, "  detail:       %s\n", r.Relay.HealthDetail)
 		}
-	} else {
+	default:
 		sb.WriteString("  port:         not set (run 'drift install')\n")
 	}
 	sb.WriteString("\n")

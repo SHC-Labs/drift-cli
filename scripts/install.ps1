@@ -64,6 +64,9 @@ try {
     Log 'extracting'
     Expand-Archive -Path $archivePath -DestinationPath $tmpDir -Force
 
+    if (Test-Path $DriftInstallDir -PathType Leaf) {
+        Fatal "DRIFT_INSTALL_DIR ($DriftInstallDir) exists but is a file, not a directory"
+    }
     if (-not (Test-Path $DriftInstallDir)) {
         New-Item -ItemType Directory -Path $DriftInstallDir -Force | Out-Null
     }

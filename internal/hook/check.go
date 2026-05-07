@@ -91,8 +91,8 @@ func PromptSubmit(ctx context.Context, stdout io.Writer) error {
 	body, httpCode, fetchErr := fetchCheckUpdates(ctx, mcp, cachedHash)
 	if fetchErr != nil && httpCode == 0 {
 		EmitInactive(stdout, fmt.Sprintf(
-			"could not reach Drift server at %s. Check network connectivity (try: curl '%s/api/check-updates').",
-			mcp.BaseURL, mcp.BaseURL))
+			"could not reach the local drift relay at %s. Is the drift service running? Check with 'drift status'; restart with 'drift install' if the port shows 'not set'.",
+			mcp.BaseURL))
 		return nil
 	}
 	if httpCode == http.StatusUnauthorized || httpCode == http.StatusForbidden {

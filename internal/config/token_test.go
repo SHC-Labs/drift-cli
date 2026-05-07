@@ -2,6 +2,7 @@ package config
 
 import (
 	"errors"
+	"strings"
 	"testing"
 )
 
@@ -58,5 +59,26 @@ func TestValidateTokenV1(t *testing.T) {
 				t.Errorf("version = %q, want %q", gotVer, tc.wantVer)
 			}
 		})
+	}
+}
+
+// Token redaction guarantee: rejection error messages must not echo the
+// full payload back to the caller. Customers paste install / doctor
+// output to support, and the support inbox should not see live tokens.
+func TestValidateTokenErrorsRedactPayload(t *testing.T) {
+	cases := []string{
+		"drift_v1_AAAA+BBBB+CCCC_SECRET_PAYLOAD_DO_NOT_LEAK",
+		"drift_AAAA/BBBB/CCCC_SECRET_PAYLOAD_DO_NOT_LEAK",
+		"drift_v2x_SECRET_PAYLOAD_DO_NOT_LEAK_AAAABBBBCCCC",
+	}
+	for _, tok := range cases {
+		_, err := ValidateToken(tok)
+		if err == nil {
+			t.Errorf("%q: expected error", tok)
+			continue
+		}
+		if strings.Contains(err.Error(), "SECRET_PAYLOAD_DO_NOT_LEAK") {
+			t.Errorf("%q: error message leaks payload: %v", tok, err)
+		}
 	}
 }

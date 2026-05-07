@@ -4,6 +4,14 @@ All notable changes to drift get logged here. Format follows [Keep a Changelog](
 
 ## [Unreleased]
 
+### Fixed (v0.1.3 hotfix)
+
+- Token rejection error messages no longer echo the full token payload. Both the v1 and legacy charset errors now show a redacted fingerprint (`AAAA...XX`) and length only; the unknown-version error reports the version prefix (`v2x_`) without the payload that follows. Customers pasting install output or `drift doctor` results to a support inbox no longer leak their tokens (`internal/config/token.go`). Test added that fails if any rejection error contains a sentinel payload string.
+- `drift install` auto-recovers from a corrupt `~/.drift/config.json`. Detects parse failure, renames the bad file to `config.json.corrupt.<unix>`, and rebuilds fresh. v0.1.2 printed the parse error mid-install and exited 0 with the relay port unset, leaving customers with a silently broken install (`internal/config/binary.go`, `internal/ipc/port.go`, `internal/cli/install.go`).
+- `drift status` and `drift doctor` now distinguish a corrupt config from "never installed". The old "not set (run 'drift install')" message ran in both cases; now corrupt configs show "config corrupt at PATH (run 'drift install' to repair)" so customers don't waste time re-installing something that's already installed.
+- Hook inactive-project message clarifies that the unreachable endpoint is the local relay, not the upstream Drift server. v0.1.2 said "could not reach Drift server at http://127.0.0.1:..." which read as if mcp.driftlabs.io was down. New message names the local relay explicitly and points at `drift status` to diagnose (`internal/hook/check.go`).
+- `install.sh` and `install.ps1` pre-check `DRIFT_INSTALL_DIR`. If the path exists but is not a directory, fail with a useful error instead of letting `mkdir` print "Already exists" or PowerShell error generically.
+
 ### Fixed (v0.1.2 hotfix)
 
 - Token validator now rejects mangled version prefixes like `drift_v2x_<payload>`, `drift_v2alpha_<payload>`, `drift_v123RC1_<payload>`. v0.1.1 broadened the legacy charset to base64url, which let those forms slip through `looksVersioned` when the payload was 16+ chars (`internal/config/token.go`). Tokens that legitimately start with `v` followed by a digit but have no underscore still parse as legacy.

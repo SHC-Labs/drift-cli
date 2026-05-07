@@ -6,12 +6,20 @@ import (
 	"fmt"
 	"os"
 	"path/filepath"
+	"time"
 )
 
 // CurrentBinaryConfigVersion is the schema version this binary writes.
 // Older versions get migrated up via Migrations on read; newer versions
 // are an error (binary is too old to read this config).
 const CurrentBinaryConfigVersion = 1
+
+// ErrConfigCorrupt is returned when ~/.drift/config.json exists but
+// can't be parsed (truncated write, manual edit gone wrong, etc).
+// Callers that can repair (drift install) match on this and back up
+// the corrupt file. Callers that only read (status, doctor) match on
+// it to surface a clear "config corrupt" message instead of "not set".
+var ErrConfigCorrupt = errors.New("binary config corrupt")
 
 // BinaryConfig is the persistent state ~/.drift/config.json holds. Lives
 // alongside the keychain entry (token + install_id + ECDH privkey).
@@ -48,13 +56,28 @@ func ReadBinaryConfig() (*BinaryConfig, error) {
 	}
 	migrated, err := migrateBinaryConfig(data)
 	if err != nil {
-		return nil, fmt.Errorf("migrate %s: %w", path, err)
+		// Wrap as ErrConfigCorrupt so install can auto-recover and
+		// status/doctor can show a useful message.
+		return nil, fmt.Errorf("%w at %s: %v", ErrConfigCorrupt, path, err)
 	}
 	var cfg BinaryConfig
 	if err := json.Unmarshal(migrated, &cfg); err != nil {
-		return nil, fmt.Errorf("parse %s: %w", path, err)
+		return nil, fmt.Errorf("%w at %s: %v", ErrConfigCorrupt, path, err)
 	}
 	return &cfg, nil
+}
+
+// BackupCorruptBinaryConfig renames the corrupt config file to a
+// timestamped .corrupt sibling and returns the backup path. Subsequent
+// ReadBinaryConfig calls return fresh defaults because the original
+// file is gone. Used by drift install when it detects ErrConfigCorrupt.
+func BackupCorruptBinaryConfig() (string, error) {
+	path := BinaryConfigPath()
+	backup := fmt.Sprintf("%s.corrupt.%d", path, time.Now().Unix())
+	if err := os.Rename(path, backup); err != nil {
+		return "", fmt.Errorf("rename %s -> %s: %w", path, backup, err)
+	}
+	return backup, nil
 }
 
 // WriteBinaryConfig persists cfg to ~/.drift/config.json atomically.
