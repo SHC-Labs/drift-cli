@@ -61,8 +61,10 @@ func runInit(stdout, stderr io.Writer, mode string, deny []string) error {
 		return fmt.Errorf("getwd: %w", err)
 	}
 
-	// Walk up first to find an existing .drift.json (mirrors the bash
-	// `drift project enable`'s upsert behavior). If none, create in cwd.
+	// Walk up first to find an existing .drift.json (upsert behavior:
+	// re-running drift init from anywhere within an already-onboarded
+	// project updates the existing file rather than creating a new one).
+	// If none found, create in cwd.
 	driftPath, err := config.WalkUpForDrift(cwd)
 	if errors.Is(err, config.ErrDriftConfigNotFound) {
 		driftPath = filepath.Join(cwd, ".drift.json")

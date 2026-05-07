@@ -33,7 +33,11 @@ func TestValidateTokenV1(t *testing.T) {
 		{"legacy with plus", "drift_AAAA+BBBB+CCCC+DDDD", "", true},
 		{"legacy with slash", "drift_AAAA/BBBB/CCCC/DDDD", "", true},
 		{"legacy with space", "drift_AAAA BBBB CCCC DDDD", "", true},
-		{"sneaky v2x", "drift_v2x_abcdefghij", "", true},
+		{"sneaky v2x short", "drift_v2x_abcdefghij", "", true},
+		{"sneaky v2x long payload", "drift_v2x_AAAABBBBCCCCDDDD", "", true},
+		{"sneaky v2alpha", "drift_v2alpha_AAAABBBBCCCCDDDD", "", true},
+		{"sneaky v123RC1", "drift_v123RC1_AAAABBBBCCCCDDDD", "", true},
+		{"sneaky v0beta", "drift_v0beta_AAAABBBBCCCCDDDD", "", true},
 	}
 	for _, tc := range cases {
 		t.Run(tc.name, func(t *testing.T) {

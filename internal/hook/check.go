@@ -55,7 +55,7 @@ func PromptSubmit(ctx context.Context, stdout io.Writer) error {
 	if errors.Is(err, config.ErrDriftConfigNotFound) {
 		pwd, _ := os.Getwd()
 		EmitInactive(stdout, fmt.Sprintf(
-			"no .drift.json found by walking up from %s (CLAUDE_PROJECT_DIR) or %s. Run 'drift project enable' inside the project root to opt in.",
+			"no .drift.json found by walking up from %s (CLAUDE_PROJECT_DIR) or %s. Run 'drift init' inside the project root to opt in.",
 			projectDir, pwd))
 		return nil
 	}
@@ -71,7 +71,7 @@ func PromptSubmit(ctx context.Context, stdout io.Writer) error {
 	}
 	if !cfg.Enabled {
 		EmitInactive(stdout, fmt.Sprintf(
-			".drift.json found at %s but enabled is not true. Run 'drift project enable' to flip it on.",
+			".drift.json found at %s but enabled is not true. Set \"enabled\": true in that file (or re-run 'drift init') to flip it on.",
 			driftPath))
 		return nil
 	}

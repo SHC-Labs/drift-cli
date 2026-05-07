@@ -93,21 +93,33 @@ func isTokenPayload(s string) bool {
 	return true
 }
 
-// looksVersioned returns true if the post-prefix string starts with
-// "vN_" where N is one or more digits. Used to reject unknown versions
-// loud.
+// looksVersioned returns true if the post-prefix string starts with a
+// "v<digits>" pattern followed (after optional letters and digits) by
+// '_'. That covers canonical version forms like vN_ and mangled forms
+// like v2x_, v2alpha_, v123beta_ that should reject as unknown versions
+// rather than fall through to legacy parsing.
 func looksVersioned(s string) bool {
 	if !strings.HasPrefix(s, "v") {
 		return false
 	}
 	rest := s[1:]
-	// Walk digits, then expect '_'.
+	// Need at least one digit immediately after 'v'.
 	i := 0
 	for i < len(rest) && rest[i] >= '0' && rest[i] <= '9' {
 		i++
 	}
 	if i == 0 {
 		return false
+	}
+	// Walk any trailing letters and digits (mangled version suffixes
+	// like "x", "alpha", "beta", "RC1").
+	for i < len(rest) {
+		r := rest[i]
+		if (r >= '0' && r <= '9') || (r >= 'a' && r <= 'z') || (r >= 'A' && r <= 'Z') {
+			i++
+			continue
+		}
+		break
 	}
 	return i < len(rest) && rest[i] == '_'
 }

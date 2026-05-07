@@ -4,6 +4,11 @@ All notable changes to drift get logged here. Format follows [Keep a Changelog](
 
 ## [Unreleased]
 
+### Fixed (v0.1.2 hotfix)
+
+- Token validator now rejects mangled version prefixes like `drift_v2x_<payload>`, `drift_v2alpha_<payload>`, `drift_v123RC1_<payload>`. v0.1.1 broadened the legacy charset to base64url, which let those forms slip through `looksVersioned` when the payload was 16+ chars (`internal/config/token.go`). Tokens that legitimately start with `v` followed by a digit but have no underscore still parse as legacy.
+- Hook inactive-project messages now point at the real command. v0.1.0 and v0.1.1 told customers to "Run 'drift project enable'" but no such command exists. Replaced with `drift init` for the missing-config case and an inline "set enabled=true or re-run drift init" message for the disabled case (`internal/hook/check.go`). Stale comment in `internal/cli/init.go` cleaned up at the same time.
+
 ### Fixed (v0.1.1 hotfix)
 
 - Token validator accepts the actual dashboard charset (base64url: `A-Za-z0-9_-`) instead of hex-only. Previously rejected 100% of dashboard-issued tokens (`internal/config/token.go`, the `isHexLike` → `isTokenPayload` rename). Surfaced during internal team test of v0.1.0.
