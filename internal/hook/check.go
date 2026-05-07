@@ -268,8 +268,11 @@ func emitContextBlock(w io.Writer, content, projectHash string, cfg *config.Drif
 
 	fmt.Fprintln(w, "<drift-context>")
 	// Trim trailing newlines on content to keep the spacing tidy. The bash
-	// echo'd content + blank line; we do the same.
-	fmt.Fprintln(w, strings.TrimRight(content, "\n"))
+	// echo'd content + blank line; we do the same. Sanitize the server
+	// payload first: an upstream that returned a literal </drift-context>
+	// could otherwise close this block early and inject text the LLM
+	// reads as a system instruction.
+	fmt.Fprintln(w, SanitizeForContextBlock(strings.TrimRight(content, "\n")))
 	fmt.Fprintln(w, "")
 
 	if projectHash != "" {

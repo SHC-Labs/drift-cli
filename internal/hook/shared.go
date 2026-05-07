@@ -8,8 +8,52 @@ import (
 	"os"
 	"os/exec"
 	"path/filepath"
+	"regexp"
 	"strings"
 )
+
+// driftMarkerRe matches the literal <drift-context> and </drift-context>
+// markers (case-insensitive) so we can strip them from server-supplied
+// strings before rendering. A malicious or compromised upstream server
+// could otherwise close our context block early and inject text the LLM
+// reads as a system instruction.
+var driftMarkerRe = regexp.MustCompile(`(?i)</?drift-context>`)
+
+// SanitizeForContextBlock makes a server-supplied string safe to embed
+// inside a <drift-context>...</drift-context> block. Two defenses:
+//
+//  1. Strip the literal block markers (LLM prompt-injection defense).
+//  2. Drop ANSI escape introducers and other control characters
+//     (terminal hygiene; a hostile server can't reposition the cursor,
+//     repaint the screen, or hide content via VT escape sequences).
+//
+// The result is always pure printable text plus '\n' and '\t'. Callers
+// pass server response bodies through this before writing them out.
+func SanitizeForContextBlock(s string) string {
+	s = driftMarkerRe.ReplaceAllString(s, "[stripped-marker]")
+	var b strings.Builder
+	b.Grow(len(s))
+	for _, r := range s {
+		switch {
+		case r == 0:
+			// Drop NUL bytes outright.
+		case r == '\n' || r == '\t':
+			b.WriteRune(r)
+		case r == 0x1b:
+			// Drop the ESC byte. Subsequent CSI/OSC payload bytes will
+			// print as plain text, which is harmless without the leading
+			// ESC to introduce a terminal control sequence.
+		case r < 0x20 || r == 0x7f:
+			// Other C0 controls + DEL: replace with '?' so the user
+			// sees something happened but no control byte reaches the
+			// terminal or the LLM verbatim.
+			b.WriteRune('?')
+		default:
+			b.WriteRune(r)
+		}
+	}
+	return b.String()
+}
 
 // SilentEnv is the env var honored by drift-check. Set to non-empty to
 // restore the pre-824488d silent-exit behavior (no <drift-context> on
@@ -27,7 +71,7 @@ func EmitInactive(w io.Writer, reason string) {
 	}
 	fmt.Fprintln(w, "<drift-context>")
 	fmt.Fprintln(w, "Drift is INSTALLED but INACTIVE in this conversation.")
-	fmt.Fprintf(w, "Reason: %s\n", reason)
+	fmt.Fprintf(w, "Reason: %s\n", SanitizeForContextBlock(reason))
 	fmt.Fprintln(w, "")
 	fmt.Fprintln(w, "Action: tell the user the reason above so they can fix it.")
 	fmt.Fprintln(w, "</drift-context>")

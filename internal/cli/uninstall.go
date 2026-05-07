@@ -5,11 +5,13 @@ import (
 	"fmt"
 	"io"
 	"os"
+	"path/filepath"
 
 	"github.com/spf13/cobra"
 
 	"github.com/SHC-Labs/drift/internal/config"
 	"github.com/SHC-Labs/drift/internal/keychain"
+	driftlog "github.com/SHC-Labs/drift/internal/log"
 	"github.com/SHC-Labs/drift/internal/service"
 )
 
@@ -69,6 +71,30 @@ func runUninstall(stdout, stderr io.Writer, keepConfigs bool) error {
 		} else {
 			fmt.Fprintf(stdout, "Removed %s\n", config.BinaryConfigPath())
 		}
+		// Sweep up corrupt-config backups left by the auto-recovery path
+		// (config.json.corrupt.<unix>). They're diagnostic snapshots; if
+		// the customer is uninstalling they don't need them around.
+		if backups, _ := filepath.Glob(config.BinaryConfigPath() + ".corrupt.*"); len(backups) > 0 {
+			for _, b := range backups {
+				if err := os.Remove(b); err != nil {
+					fmt.Fprintf(stderr, "Note: remove %s: %v\n", b, err)
+				}
+			}
+			fmt.Fprintf(stdout, "Removed %d corrupt-config backup(s)\n", len(backups))
+		}
+		// Relay log file lives at ~/.drift/logs/drift.log. Useful for
+		// post-mortem during normal operation, but uninstall means the
+		// customer is done with this binary on this machine.
+		if err := os.Remove(driftlog.LogPath()); err == nil {
+			fmt.Fprintf(stdout, "Removed %s\n", driftlog.LogPath())
+		} else if !os.IsNotExist(err) {
+			fmt.Fprintf(stderr, "Note: remove %s: %v\n", driftlog.LogPath(), err)
+		}
+		// Try to remove the now-empty logs/ and ~/.drift/ dirs. Ignore
+		// errors; they're directories and may legitimately have other
+		// content (e.g., user-created files).
+		_ = os.Remove(filepath.Dir(driftlog.LogPath()))
+		_ = os.Remove(filepath.Dir(config.BinaryConfigPath()))
 		if err := removeMCPDriftEntry(); err != nil {
 			fmt.Fprintf(stderr, "Note: clean ~/.mcp.json: %v\n", err)
 		} else {

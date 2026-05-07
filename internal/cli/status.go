@@ -80,6 +80,8 @@ func runStatus(stdout io.Writer) error {
 	fmt.Fprintln(stdout, "drift status")
 	fmt.Fprintf(stdout, "  service:       %s\n", svcState)
 	switch {
+	case errors.Is(portErr, config.ErrConfigVersionFuture):
+		fmt.Fprintf(stdout, "  relay port:    config schema is newer than this binary supports — upgrade drift (%s)\n", config.BinaryConfigPath())
 	case errors.Is(portErr, config.ErrConfigCorrupt):
 		fmt.Fprintf(stdout, "  relay port:    config corrupt at %s (run 'drift install' to repair)\n", config.BinaryConfigPath())
 	case port > 0:

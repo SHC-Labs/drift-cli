@@ -130,6 +130,8 @@ func Run(ctx context.Context, recentLogLines int) Report {
 
 	port, portErr := ipc.CurrentPort()
 	switch {
+	case errors.Is(portErr, config.ErrConfigVersionFuture):
+		r.Relay.ConfigError = portErr.Error()
 	case errors.Is(portErr, config.ErrConfigCorrupt):
 		r.Relay.ConfigError = portErr.Error()
 	case port > 0:
@@ -214,8 +216,15 @@ func FormatText(r Report) string {
 	sb.WriteString("relay\n")
 	switch {
 	case r.Relay.ConfigError != "":
-		fmt.Fprintf(&sb, "  port:         CONFIG CORRUPT: %s\n", r.Relay.ConfigError)
-		sb.WriteString("                run 'drift install' to back up the bad file and rebuild fresh\n")
+		// Distinguish "newer than this binary supports" (upgrade drift)
+		// from a structurally-bad file (run drift install to repair).
+		if strings.Contains(r.Relay.ConfigError, "schema") && strings.Contains(r.Relay.ConfigError, "newer") {
+			fmt.Fprintf(&sb, "  port:         %s\n", r.Relay.ConfigError)
+			sb.WriteString("                upgrade drift; do not delete the config\n")
+		} else {
+			fmt.Fprintf(&sb, "  port:         CONFIG CORRUPT: %s\n", r.Relay.ConfigError)
+			sb.WriteString("                run 'drift install' to back up the bad file and rebuild fresh\n")
+		}
 	case r.Relay.Port > 0:
 		fmt.Fprintf(&sb, "  port:         127.0.0.1:%d\n", r.Relay.Port)
 		fmt.Fprintf(&sb, "  health:       %s\n", boolStr(r.Relay.HealthOK, "up", "down"))

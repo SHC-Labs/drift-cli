@@ -4,6 +4,12 @@ All notable changes to drift get logged here. Format follows [Keep a Changelog](
 
 ## [Unreleased]
 
+### Fixed (v0.1.4 hotfix)
+
+- Sanitize server-supplied content before rendering inside `<drift-context>...</drift-context>` blocks. A compromised or malicious upstream Drift server could otherwise include literal `</drift-context>` markers in activity feed text, close the context block early, and inject text the LLM would read as a system instruction. Same defense covers the HTTP-error fallback path that echoed the first 200 bytes of an unexpected response. The new sanitizer also drops ANSI escape introducers, NUL bytes, and other C0 control characters so a hostile server can't repaint the customer's terminal or hide content via VT escapes (`internal/hook/shared.go`, `internal/hook/check.go`). 8 boundary tests in `shared_test.go` cover marker stripping, case-insensitive variants, ANSI/NUL/control-byte stripping, and benign UTF-8 preservation.
+- Future-version configs get a "schema is newer than this binary supports — upgrade drift" message instead of being treated as corrupt. The previous behavior conflated "structurally broken file" with "binary too old to read this file"; the latter shouldn't trigger the auto-backup path that would lose customer data. New `ErrConfigVersionFuture` sentinel propagates from `ReadBinaryConfig` to status, doctor, and install (`internal/config/binary.go`, `internal/cli/status.go`, `internal/doctor/doctor.go`).
+- `drift uninstall` sweeps up diagnostic residue: the `~/.drift/logs/drift.log` relay log file and any `~/.drift/config.json.corrupt.*` backups left by the auto-recovery path. v0.1.3 left these behind across uninstalls, accumulating over time. Now removes them along with the now-empty `logs/` and `~/.drift/` directories (`internal/cli/uninstall.go`).
+
 ### Fixed (v0.1.3 hotfix)
 
 - Token rejection error messages no longer echo the full token payload. Both the v1 and legacy charset errors now show a redacted fingerprint (`AAAA...XX`) and length only; the unknown-version error reports the version prefix (`v2x_`) without the payload that follows. Customers pasting install output or `drift doctor` results to a support inbox no longer leak their tokens (`internal/config/token.go`). Test added that fails if any rejection error contains a sentinel payload string.

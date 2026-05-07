@@ -21,6 +21,12 @@ const CurrentBinaryConfigVersion = 1
 // it to surface a clear "config corrupt" message instead of "not set".
 var ErrConfigCorrupt = errors.New("binary config corrupt")
 
+// ErrConfigVersionFuture is returned when ~/.drift/config.json parses
+// fine but its schema version is newer than this binary supports. The
+// fix is to upgrade the binary, NOT to wipe the config: the data is
+// presumably still valid and downgrading drift loses fields.
+var ErrConfigVersionFuture = errors.New("binary config schema is newer than this binary supports")
+
 // BinaryConfig is the persistent state ~/.drift/config.json holds. Lives
 // alongside the keychain entry (token + install_id + ECDH privkey).
 //
@@ -56,8 +62,14 @@ func ReadBinaryConfig() (*BinaryConfig, error) {
 	}
 	migrated, err := migrateBinaryConfig(data)
 	if err != nil {
-		// Wrap as ErrConfigCorrupt so install can auto-recover and
-		// status/doctor can show a useful message.
+		// Future-version configs aren't corrupt; the binary is just
+		// too old to read them. Preserve the sentinel so callers can
+		// give the right "upgrade drift" message.
+		if errors.Is(err, ErrConfigVersionFuture) {
+			return nil, fmt.Errorf("%w at %s", err, path)
+		}
+		// Otherwise wrap as ErrConfigCorrupt so install can auto-recover
+		// and status/doctor can show a useful message.
 		return nil, fmt.Errorf("%w at %s: %v", ErrConfigCorrupt, path, err)
 	}
 	var cfg BinaryConfig
@@ -113,7 +125,7 @@ func migrateBinaryConfig(data []byte) ([]byte, error) {
 		version = 1
 	}
 	if version > CurrentBinaryConfigVersion {
-		return nil, fmt.Errorf("config version %d is newer than this binary supports (max %d). Upgrade drift", version, CurrentBinaryConfigVersion)
+		return nil, fmt.Errorf("%w: schema version %d, this binary handles up to %d", ErrConfigVersionFuture, version, CurrentBinaryConfigVersion)
 	}
 	for version < CurrentBinaryConfigVersion {
 		mig, ok := binaryMigrations[version]
