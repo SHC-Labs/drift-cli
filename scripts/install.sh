@@ -132,5 +132,20 @@ case ":$PATH:" in
     *) log "WARNING: $DRIFT_INSTALL_DIR is not in PATH. Add it to your shell config." ;;
 esac
 
-# Run drift install to register the service + per-client configs.
-exec "$DRIFT_INSTALL_DIR/drift" install "$@"
+# Hand off to drift quickstart so the customer gets the guided wizard
+# right after the binary lands. Three TTY paths to handle:
+#
+#   1. Interactive shell with stdin already a TTY (e.g. `bash <(curl)`
+#      process substitution): wizard reads from stdin directly.
+#   2. Pipe form (`curl | sh`): sh's stdin is the curl pipe, not a
+#      TTY. Reopen /dev/tty as stdin so the wizard can still prompt.
+#   3. No TTY at all (CI, container without /dev/tty): fall through
+#      to plain `drift install`. The same fallback also lives inside
+#      the binary's quickstart command, so this branch is paranoia.
+if [ -t 0 ]; then
+    exec "$DRIFT_INSTALL_DIR/drift" quickstart "$@"
+elif [ -r /dev/tty ]; then
+    exec "$DRIFT_INSTALL_DIR/drift" quickstart "$@" < /dev/tty
+else
+    exec "$DRIFT_INSTALL_DIR/drift" install "$@"
+fi

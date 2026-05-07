@@ -4,6 +4,13 @@ All notable changes to drift get logged here. Format follows [Keep a Changelog](
 
 ## [Unreleased]
 
+### Added (v0.1.8)
+
+- New `drift quickstart` command. Guided wizard that runs after the install one-liner downloads the binary. Five steps: machine-level install, list of detected LLM clients with tier labels (FULL / AGENTS.MD / MCP-ONLY) matching the dashboard, project-root prompt, per-project setup with the existing `drift init` pipeline, and a relay verify step. Falls back to plain `drift install` when stdin isn't a TTY so CI/scripted installs keep working.
+- `install.sh` and `install.ps1` end with `drift quickstart` instead of `drift install`. Bash also reopens `/dev/tty` for `curl | sh`-form installs so the wizard prompts work even when curl owns the original stdin. PowerShell branches on `[Environment]::UserInteractive`.
+- Multi-project legacy hook scanner. `drift quickstart` walks `~/.claude/projects/` after setting up the chosen project and offers batch migration of legacy bash-CLI hook entries (`drift-check.bat` / `drift-report.sh` / `.mjs` variants) across other project roots. Reuses the same upsert-with-replace path drift init already runs.
+- Legacy bash-CLI hook entries are now detected by command pattern, not just by `_drift_tag`. `upsertHookEntry` checks for untagged entries whose command points at a `drift-check.{bat,sh,mjs}` or `drift-report.{bat,sh,mjs}` wrapper and replaces them in place. Closes the upgrade-from-bash-CLI gap that left fresh installs with stale hook entries pointing at scripts that don't exist anymore on the new install.
+
 ### Fixed (v0.1.7 hotfix)
 
 - Service install on Windows no longer hard-fails when PowerShell isn't elevated. v0.1.4-v0.1.6 returned "Access is denied" and told the customer to "fix the error and re-run", which is hostile. v0.1.7 detects the access-denied error and falls back to a user-mode autostart: drops a `drift-relay.cmd` launcher in `%APPDATA%\Microsoft\Windows\Start Menu\Programs\Startup\` and launches the relay process detached so the current session works without logout/login. Customers who want a real Windows Service (auto-restart on crash, system-wide persistence) can re-run `drift install` from an elevated PowerShell. New build-tagged files `internal/service/install_user_windows.go` and `internal/service/install_user_other.go`.

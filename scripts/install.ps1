@@ -117,8 +117,19 @@ public static extern System.IntPtr SendMessageTimeout(System.IntPtr hWnd, uint M
         $env:PATH = "$env:PATH;$DriftInstallDir"
     }
 
-    Log 'running drift install'
-    & $exeDst install
+    # Hand off to drift quickstart so the customer gets the guided
+    # wizard right after the binary lands. PowerShell sessions invoked
+    # via `iwr | iex` keep UserInteractive=true, so prompts work
+    # without /dev/tty redirection. Non-interactive contexts (CI,
+    # automated runners) fall through to plain drift install. The same
+    # fallback also lives inside the binary's quickstart command.
+    if ([Environment]::UserInteractive) {
+        Log 'running drift quickstart (guided setup)'
+        & $exeDst quickstart
+    } else {
+        Log 'running drift install (non-interactive)'
+        & $exeDst install
+    }
 }
 finally {
     if (Test-Path $tmpDir) {

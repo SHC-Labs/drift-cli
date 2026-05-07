@@ -133,9 +133,13 @@ func UnregisterClaudeCodeHooks(projectDir string) (string, error) {
 }
 
 // upsertHookEntry replaces any existing drift-tagged entry in the slice
-// with newEntry. If no drift-tagged entry exists, appends. Preserves
-// every other entry (matcher position included) so unrelated hooks
-// keep firing in their original order.
+// with newEntry. If no drift-tagged entry exists but a legacy bash-CLI
+// entry (untagged, command pointing at one of the old wrapper scripts)
+// is present, replaces THAT instead — covers the upgrade-from-bash-CLI
+// path where customers have stale .bat/.sh hooks Claude Code can't
+// even spawn anymore. If neither exists, appends. Preserves every
+// other entry (matcher position + ordering) so unrelated hooks keep
+// firing as the user configured them.
 func upsertHookEntry(entries []hookEntry, newEntry hookEntry) []hookEntry {
 	for i, e := range entries {
 		if e.Tag == driftHookMarker {
@@ -143,7 +147,42 @@ func upsertHookEntry(entries []hookEntry, newEntry hookEntry) []hookEntry {
 			return entries
 		}
 	}
+	for i, e := range entries {
+		if isLegacyDriftHookEntry(e) {
+			entries[i] = newEntry
+			return entries
+		}
+	}
 	return append(entries, newEntry)
+}
+
+// isLegacyDriftHookEntry returns true when entry looks like one the
+// pre-Go-binary bash CLI installed: command points at a drift-check or
+// drift-report wrapper script (.bat on Windows, .sh on Unix, .mjs in
+// some early variants). Used so the Go binary's drift init can replace
+// these in place rather than appending new tagged entries alongside
+// the broken legacy ones.
+func isLegacyDriftHookEntry(e hookEntry) bool {
+	if e.Tag != "" {
+		// Anything tagged isn't legacy. drift-managed handled by the
+		// caller; foreign tags are user-owned.
+		return false
+	}
+	for _, h := range e.Hooks {
+		if h.Type != "command" {
+			continue
+		}
+		cmd := strings.ToLower(h.Command)
+		if strings.Contains(cmd, "drift-check.bat") ||
+			strings.Contains(cmd, "drift-check.sh") ||
+			strings.Contains(cmd, "drift-check.mjs") ||
+			strings.Contains(cmd, "drift-report.bat") ||
+			strings.Contains(cmd, "drift-report.sh") ||
+			strings.Contains(cmd, "drift-report.mjs") {
+			return true
+		}
+	}
+	return false
 }
 
 // readRawSettings loads .claude/settings.local.json into a generic map.
