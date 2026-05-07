@@ -144,6 +144,8 @@ func mcpInactiveReason(err error) string {
 	switch {
 	case errors.Is(err, config.ErrMCPMissing):
 		return "~/.mcp.json missing. Reinstall via 'curl -fsSL https://mcp.driftlabs.io/install | sh'."
+	case errors.Is(err, config.ErrMCPCorrupt):
+		return "~/.mcp.json is corrupt. Re-run 'drift install' to back up the bad file and rebuild fresh."
 	case errors.Is(err, config.ErrDriftServerMissing):
 		return "no Drift entry in ~/.mcp.json mcpServers. Reinstall via 'curl -fsSL https://mcp.driftlabs.io/install | sh'."
 	case errors.Is(err, config.ErrTokenMissing):
@@ -283,8 +285,17 @@ func emitContextBlock(w io.Writer, content, projectHash string, cfg *config.Drif
 	}
 
 	if len(cfg.DeniedTools) > 0 {
-		fmt.Fprintf(w, "PROJECT POLICY -- %s marks this project with restrictions.\n", driftPath)
-		fmt.Fprintf(w, "Tools that MUST NOT be called from this project: %s\n", strings.Join(cfg.DeniedTools, ", "))
+		// Sanitize both the path and the tool names. .drift.json is a
+		// repo-checked-in file: a malicious commit could plant marker
+		// strings in denied_tools entries (or, in pathological cases,
+		// repo names) and escape the context block. Same defense we
+		// apply to server-supplied content.
+		sanitizedTools := make([]string, len(cfg.DeniedTools))
+		for i, tool := range cfg.DeniedTools {
+			sanitizedTools[i] = SanitizeForContextBlock(tool)
+		}
+		fmt.Fprintf(w, "PROJECT POLICY -- %s marks this project with restrictions.\n", SanitizeForContextBlock(driftPath))
+		fmt.Fprintf(w, "Tools that MUST NOT be called from this project: %s\n", strings.Join(sanitizedTools, ", "))
 		fmt.Fprintln(w, "Refuse the call if the user asks. Tell them this project's .drift.json denies it.")
 		fmt.Fprintln(w, "")
 	}

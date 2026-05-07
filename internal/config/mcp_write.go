@@ -4,7 +4,9 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
+	"io"
 	"os"
+	"time"
 )
 
 // WriteMCPDriftEntry merges the drift mcpServers entry into ~/.mcp.json.
@@ -18,6 +20,14 @@ import (
 // Authorization header at all -- the local relay accepts any
 // localhost connection.
 func WriteMCPDriftEntry(driftURL string) error {
+	return WriteMCPDriftEntryRecovering(driftURL, io.Discard)
+}
+
+// WriteMCPDriftEntryRecovering is WriteMCPDriftEntry that prints a
+// recovery notice to the supplied writer if it has to back up a corrupt
+// ~/.mcp.json. drift install uses this so the customer sees what
+// happened. Without this, a corrupt file made install fail mid-flow.
+func WriteMCPDriftEntryRecovering(driftURL string, notify io.Writer) error {
 	path := MCPPath()
 
 	// Read-modify-write the file. Use a generic map so we don't drop
@@ -29,7 +39,14 @@ func WriteMCPDriftEntry(driftURL string) error {
 	}
 	if len(existing) > 0 {
 		if err := json.Unmarshal(existing, &root); err != nil {
-			return fmt.Errorf("parse %s: %w", path, err)
+			// Corrupt mcp.json (truncated write, manual edit gone wrong).
+			// Back up and start fresh rather than failing install.
+			backup := fmt.Sprintf("%s.corrupt.%d", path, time.Now().Unix())
+			if rerr := os.Rename(path, backup); rerr != nil {
+				return fmt.Errorf("parse %s: %w (and could not back up: %v)", path, err, rerr)
+			}
+			fmt.Fprintf(notify, "drift install: ~/.mcp.json was corrupt; backed up to %s and rebuilding fresh.\n", backup)
+			root = map[string]json.RawMessage{}
 		}
 	}
 

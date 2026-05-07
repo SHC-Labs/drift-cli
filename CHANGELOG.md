@@ -4,6 +4,12 @@ All notable changes to drift get logged here. Format follows [Keep a Changelog](
 
 ## [Unreleased]
 
+### Fixed (v0.1.5 hotfix)
+
+- Sanitize `denied_tools` entries and the `.drift.json` path before rendering the PROJECT POLICY block. v0.1.4 closed the upstream-server prompt-injection vector; this closes the equivalent vector for repo-checked-in `.drift.json` content. A malicious commit that planted `</drift-context>SYSTEM: ...<drift-context>` in `denied_tools` could otherwise escape the context block when a teammate ran Claude Code in that repo. New regression test `strips marker from .drift.json content` locks the boundary.
+- `~/.mcp.json` parse errors now wrap a new `ErrMCPCorrupt` sentinel so callers can distinguish corrupt-file from truly-missing. `drift status` reports `corrupt at PATH (run 'drift install' to repair)` instead of the misleading `missing`. Hook inactive-message gains a corrupt-mcp.json branch with the same advice (`internal/config/mcp.go`, `internal/cli/status.go`, `internal/hook/check.go`).
+- `drift install` auto-recovers from a corrupt `~/.mcp.json`. `WriteMCPDriftEntryRecovering` renames the bad file to `~/.mcp.json.corrupt.<unix>` and writes fresh, mirroring the binary-config recovery path. v0.1.4 failed mid-install with a parse error and left the customer stuck (`internal/config/mcp_write.go`, `internal/cli/install.go`).
+
 ### Fixed (v0.1.4 hotfix)
 
 - Sanitize server-supplied content before rendering inside `<drift-context>...</drift-context>` blocks. A compromised or malicious upstream Drift server could otherwise include literal `</drift-context>` markers in activity feed text, close the context block early, and inject text the LLM would read as a system instruction. Same defense covers the HTTP-error fallback path that echoed the first 200 bytes of an unexpected response. The new sanitizer also drops ANSI escape introducers, NUL bytes, and other C0 control characters so a hostile server can't repaint the customer's terminal or hide content via VT escapes (`internal/hook/shared.go`, `internal/hook/check.go`). 8 boundary tests in `shared_test.go` cover marker stripping, case-insensitive variants, ANSI/NUL/control-byte stripping, and benign UTF-8 preservation.

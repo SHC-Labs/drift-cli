@@ -56,7 +56,7 @@ func ReadMCP() (*MCPConfig, error) {
 
 	var raw MCPFile
 	if err := json.Unmarshal(data, &raw); err != nil {
-		return nil, fmt.Errorf("parse %s: %w", path, err)
+		return nil, fmt.Errorf("%w at %s: %v", ErrMCPCorrupt, path, err)
 	}
 
 	driftRaw, ok := raw.MCPServers["drift"]
@@ -112,6 +112,7 @@ func baseURL(raw string) (string, error) {
 // right loud-context message.
 var (
 	ErrMCPMissing         = errors.New("~/.mcp.json missing")
+	ErrMCPCorrupt         = errors.New("~/.mcp.json corrupt")
 	ErrDriftServerMissing = errors.New("drift entry missing from mcpServers")
 	ErrTokenMissing       = errors.New("no Drift token in ~/.mcp.json")
 	ErrTokenPlaceholder   = errors.New("token is the YOUR_DRIFT_TOKEN placeholder")

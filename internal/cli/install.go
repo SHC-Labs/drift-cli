@@ -133,7 +133,7 @@ func runInstall(stdout, stderr io.Writer, customURL string, unsafeURL, keepLegac
 	// The relay forwards to mcpURL with the Bearer header from the
 	// keychain. MCP clients see only localhost.
 	relayURL := fmt.Sprintf("http://127.0.0.1:%d/mcp", port)
-	if err := config.WriteMCPDriftEntry(relayURL); err != nil {
+	if err := config.WriteMCPDriftEntryRecovering(relayURL, stdout); err != nil {
 		return fmt.Errorf("write %s: %w", config.MCPPath(), err)
 	}
 	fmt.Fprintf(stdout, "Wrote drift entry to %s (-> %s)\n", config.MCPPath(), relayURL)

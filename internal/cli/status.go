@@ -72,9 +72,21 @@ func runStatus(stdout io.Writer) error {
 		relayHealthy = probeRelayHealth(port)
 	}
 
-	mcpPresent := false
-	if _, err := config.ReadMCP(); err == nil {
-		mcpPresent = true
+	// mcpStatus tracks three states: present-and-valid, missing, corrupt.
+	// "present" + "missing" had been the only options; corrupt looked
+	// like missing, which sent customers down the wrong fix path.
+	var mcpStatus string
+	switch _, err := config.ReadMCP(); {
+	case err == nil:
+		mcpStatus = "present"
+	case errors.Is(err, config.ErrMCPMissing):
+		mcpStatus = "missing"
+	case errors.Is(err, config.ErrMCPCorrupt):
+		mcpStatus = "corrupt at " + config.MCPPath() + " (run 'drift install' to repair)"
+	default:
+		// Drift entry missing, token missing, etc. The file itself is
+		// fine; the contents are incomplete. Show the underlying reason.
+		mcpStatus = "incomplete (" + err.Error() + ")"
 	}
 
 	fmt.Fprintln(stdout, "drift status")
@@ -90,7 +102,7 @@ func runStatus(stdout io.Writer) error {
 	default:
 		fmt.Fprintln(stdout, "  relay port:    not set (run 'drift install')")
 	}
-	fmt.Fprintf(stdout, "  ~/.mcp.json:   %s\n", boolStr(mcpPresent, "present", "missing"))
+	fmt.Fprintf(stdout, "  ~/.mcp.json:   %s\n", mcpStatus)
 	fmt.Fprintf(stdout, "  token:         %s\n", boolStr(tokenPresent, "in keychain", "missing (run 'drift login' or DRIFT_TOKEN= drift install)"))
 	if installID != "" {
 		fmt.Fprintf(stdout, "  install_id:    %s\n", installID)
