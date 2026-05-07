@@ -34,9 +34,15 @@ type driftServerEntry struct {
 }
 
 // MCPPath returns the user's ~/.mcp.json path. Pulled into a function so
-// tests can override via $HOME.
+// tests can override via $HOME. Returns "" when HOME is not set;
+// callers must treat empty path as a config-unavailable signal rather
+// than a CWD-relative read (a hostile cwd shouldn't supply drift's
+// MCP config).
 func MCPPath() string {
-	home, _ := os.UserHomeDir()
+	home, err := Home()
+	if err != nil {
+		return ""
+	}
 	return filepath.Join(home, ".mcp.json")
 }
 
@@ -46,6 +52,9 @@ func MCPPath() string {
 // each case.
 func ReadMCP() (*MCPConfig, error) {
 	path := MCPPath()
+	if path == "" {
+		return nil, ErrHomeUnset
+	}
 	data, err := os.ReadFile(path)
 	if err != nil {
 		if errors.Is(err, os.ErrNotExist) {

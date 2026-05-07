@@ -29,6 +29,9 @@ func WriteMCPDriftEntry(driftURL string) error {
 // happened. Without this, a corrupt file made install fail mid-flow.
 func WriteMCPDriftEntryRecovering(driftURL string, notify io.Writer) error {
 	path := MCPPath()
+	if path == "" {
+		return ErrHomeUnset
+	}
 
 	// Read-modify-write the file. Use a generic map so we don't drop
 	// other top-level keys that aren't in our struct.

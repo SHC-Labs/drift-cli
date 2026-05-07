@@ -165,7 +165,15 @@ func runInstall(stdout, stderr io.Writer, customURL string, unsafeURL, keepLegac
 				go fireClientConnected(installID, string(d.ID), true, "")
 			}
 		default:
-			fmt.Fprintf(stdout, "Wrote drift entry to %s (%s)\n", path, d.ID)
+			// Claude Code reads from ~/.mcp.json (already written above
+			// at line 139). The per-client writer is a no-op for it; the
+			// previous "Wrote drift entry to .../.claude/settings.json"
+			// message lied about a write that never happened.
+			if d.ID == clients.ClaudeCode {
+				fmt.Fprintf(stdout, "Detected %s (uses %s)\n", d.ID, config.MCPPath())
+			} else {
+				fmt.Fprintf(stdout, "Wrote drift entry to %s (%s)\n", path, d.ID)
+			}
 			if installID != "" {
 				go fireClientConnected(installID, string(d.ID), true, path)
 			}

@@ -23,6 +23,24 @@ import (
 // dominated by these two calls (policy sync + check-updates).
 const httpTimeoutCheck = 3 * time.Second
 
+// maxCheckUpdatesBody caps the activity-feed body that gets rendered
+// into the <drift-context> block. A hostile or compromised upstream
+// could otherwise return an arbitrarily large body and flood the LLM's
+// context window plus the customer's terminal. 64KB is well above any
+// realistic activity feed size; the truncation marker tells the LLM
+// the rest was dropped.
+const maxCheckUpdatesBody = 64 * 1024
+
+// maxDeniedTools caps the number of denied_tools entries rendered into
+// the PROJECT POLICY block. A malicious .drift.json with thousands of
+// entries would otherwise multiply into a large LLM context payload.
+const maxDeniedTools = 50
+
+// maxDeniedToolNameLen caps each rendered denied_tools entry. Real tool
+// names are short identifiers; anything longer is either a mistake or
+// an attempt to flood the policy block.
+const maxDeniedToolNameLen = 200
+
 // PromptSubmit is the entry point the cobra subcommand calls. Reads env +
 // ~/.mcp.json + .drift.json, syncs project policy if changed, fetches team
 // activity, emits a <drift-context> block to stdout. Always returns nil;
@@ -198,7 +216,13 @@ func fetchCheckUpdates(ctx context.Context, mcp *config.MCPConfig, cachedHash st
 		return "", 0, err
 	}
 	defer resp.Body.Close()
-	body, _ := io.ReadAll(resp.Body)
+	// Cap the read so a hostile upstream can't flood the LLM context.
+	// Read maxCheckUpdatesBody+1 bytes so we can detect overflow.
+	body, _ := io.ReadAll(io.LimitReader(resp.Body, maxCheckUpdatesBody+1))
+	if len(body) > maxCheckUpdatesBody {
+		body = body[:maxCheckUpdatesBody]
+		body = append(body, []byte("\n[truncated: server response exceeded body cap]")...)
+	}
 	return string(body), resp.StatusCode, nil
 }
 
@@ -290,12 +314,29 @@ func emitContextBlock(w io.Writer, content, projectHash string, cfg *config.Drif
 		// strings in denied_tools entries (or, in pathological cases,
 		// repo names) and escape the context block. Same defense we
 		// apply to server-supplied content.
-		sanitizedTools := make([]string, len(cfg.DeniedTools))
-		for i, tool := range cfg.DeniedTools {
+		//
+		// Plus a DoS cap: a bad-faith repo with thousands of entries or
+		// one entry that's a megabyte long would otherwise multiply into
+		// the rendered policy block. Trim to maxDeniedTools by count and
+		// maxDeniedToolNameLen by per-entry length.
+		tools := cfg.DeniedTools
+		overflowCount := 0
+		if len(tools) > maxDeniedTools {
+			overflowCount = len(tools) - maxDeniedTools
+			tools = tools[:maxDeniedTools]
+		}
+		sanitizedTools := make([]string, len(tools))
+		for i, tool := range tools {
+			if len(tool) > maxDeniedToolNameLen {
+				tool = tool[:maxDeniedToolNameLen] + "...[truncated]"
+			}
 			sanitizedTools[i] = SanitizeForContextBlock(tool)
 		}
 		fmt.Fprintf(w, "PROJECT POLICY -- %s marks this project with restrictions.\n", SanitizeForContextBlock(driftPath))
 		fmt.Fprintf(w, "Tools that MUST NOT be called from this project: %s\n", strings.Join(sanitizedTools, ", "))
+		if overflowCount > 0 {
+			fmt.Fprintf(w, "  (+ %d more denied entries omitted; .drift.json has too many)\n", overflowCount)
+		}
 		fmt.Fprintln(w, "Refuse the call if the user asks. Tell them this project's .drift.json denies it.")
 		fmt.Fprintln(w, "")
 	}

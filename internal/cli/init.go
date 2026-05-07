@@ -181,24 +181,49 @@ func runUninit(stdout, stderr io.Writer) error {
 	return nil
 }
 
-// writeDriftConfig serializes cfg as pretty-printed JSON and writes
-// atomically. Manual marshal so the field order matches the bash
-// helper's output (cosmetic; the read path doesn't care).
+// writeDriftConfig writes cfg to .drift.json atomically. Read-modify-
+// write through a raw map so unknown top-level fields are preserved:
+// a customer's `.drift.json` may contain forward-compat fields meant
+// for a future drift version, or fields used by other tools that
+// piggy-back on the file. Earlier revisions of this function rebuilt
+// from a fixed struct and silently dropped those fields.
 func writeDriftConfig(path string, cfg *config.DriftConfig) error {
-	out := struct {
-		Version     int      `json:"version"`
-		Enabled     bool     `json:"enabled"`
-		Mode        string   `json:"mode,omitempty"`
-		DeniedTools []string `json:"denied_tools,omitempty"`
-		ReportEdits bool     `json:"report_edits"`
-	}{
-		Version:     cfg.Version,
-		Enabled:     cfg.Enabled,
-		Mode:        cfg.Mode,
-		DeniedTools: cfg.DeniedTools,
-		ReportEdits: cfg.ReportEdits,
+	root := map[string]json.RawMessage{}
+	if existing, err := os.ReadFile(path); err == nil {
+		_ = json.Unmarshal(existing, &root)
 	}
-	data, err := json.MarshalIndent(out, "", "  ")
+	setField := func(key string, value any) error {
+		raw, err := json.Marshal(value)
+		if err != nil {
+			return err
+		}
+		root[key] = raw
+		return nil
+	}
+	if err := setField("version", cfg.Version); err != nil {
+		return err
+	}
+	if err := setField("enabled", cfg.Enabled); err != nil {
+		return err
+	}
+	if cfg.Mode != "" {
+		if err := setField("mode", cfg.Mode); err != nil {
+			return err
+		}
+	} else {
+		delete(root, "mode")
+	}
+	if len(cfg.DeniedTools) > 0 {
+		if err := setField("denied_tools", cfg.DeniedTools); err != nil {
+			return err
+		}
+	} else {
+		delete(root, "denied_tools")
+	}
+	if err := setField("report_edits", cfg.ReportEdits); err != nil {
+		return err
+	}
+	data, err := json.MarshalIndent(root, "", "  ")
 	if err != nil {
 		return err
 	}

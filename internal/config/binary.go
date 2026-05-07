@@ -41,9 +41,15 @@ type BinaryConfig struct {
 }
 
 // BinaryConfigPath returns ~/.drift/config.json. Pulled into a function
-// so tests can override via $HOME.
+// so tests can override via $HOME. Returns "" when HOME is not set;
+// callers must treat empty path as a config-unavailable signal rather
+// than a CWD-relative read (security: a hostile cwd shouldn't supply
+// drift's persistent state).
 func BinaryConfigPath() string {
-	home, _ := os.UserHomeDir()
+	home, err := Home()
+	if err != nil {
+		return ""
+	}
 	return filepath.Join(home, ".drift", "config.json")
 }
 
@@ -53,6 +59,9 @@ func BinaryConfigPath() string {
 // fresh-install case.
 func ReadBinaryConfig() (*BinaryConfig, error) {
 	path := BinaryConfigPath()
+	if path == "" {
+		return nil, ErrHomeUnset
+	}
 	data, err := os.ReadFile(path)
 	if err != nil {
 		if errors.Is(err, os.ErrNotExist) {

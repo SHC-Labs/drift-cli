@@ -78,3 +78,19 @@ func TestSanitizeForContextBlock(t *testing.T) {
 		}
 	})
 }
+
+// Cap constants are the second line of defense against repo-checked-in
+// .drift.json or hostile upstream responses bloating the LLM context.
+// These tests pin the values so a careless tweak doesn't quietly remove
+// the cap.
+func TestContextBlockCaps(t *testing.T) {
+	if maxCheckUpdatesBody < 16*1024 || maxCheckUpdatesBody > 1024*1024 {
+		t.Errorf("maxCheckUpdatesBody outside sane range: %d", maxCheckUpdatesBody)
+	}
+	if maxDeniedTools < 10 || maxDeniedTools > 500 {
+		t.Errorf("maxDeniedTools outside sane range: %d", maxDeniedTools)
+	}
+	if maxDeniedToolNameLen < 50 || maxDeniedToolNameLen > 2048 {
+		t.Errorf("maxDeniedToolNameLen outside sane range: %d", maxDeniedToolNameLen)
+	}
+}
