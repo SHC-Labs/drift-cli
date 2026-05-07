@@ -49,7 +49,7 @@ Versioned via `/v1/` URL prefix. v2 endpoints land at `/v2/` without breaking v1
 
 ### Token format
 
-`drift_v1_<payload>` going forward. Existing `drift_<hex>` tokens are parsed as implicit v1 for backwards compat. Future formats use a new version prefix (`drift_v2_*`).
+`drift_<base64url>` is the format the dashboard issues today (48 random bytes encoded as base64url, 64 chars after the prefix). Treated as implicit v1. An explicit `drift_v1_<base64url>` prefix is accepted for forward-compat. Future formats use a new version prefix (`drift_v2_*`) and are rejected by v1 binaries.
 
 ### Logging format
 

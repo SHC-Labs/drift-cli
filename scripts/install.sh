@@ -5,7 +5,7 @@
 #
 # Usage:
 #   curl -fsSL https://mcp.driftlabs.io/install | sh
-#   DRIFT_TOKEN=drift_v1_xxx curl -fsSL https://mcp.driftlabs.io/install | sh
+#   DRIFT_TOKEN=drift_xxx curl -fsSL https://mcp.driftlabs.io/install | sh
 #   DRIFT_VERSION=v1.0.0 curl -fsSL https://mcp.driftlabs.io/install | sh
 #
 # Verifies SHA-256 checksum + (when present) cosign signature of the
@@ -24,7 +24,18 @@ detect_os() {
     case "$(uname -s)" in
         Linux*) echo linux ;;
         Darwin*) echo darwin ;;
-        *) fatal "unsupported OS: $(uname -s). Use install.ps1 on Windows." ;;
+        MINGW*|MSYS*|CYGWIN*)
+            tok="${DRIFT_TOKEN:-drift_<paste-your-token>}"
+            log "drift install: detected Windows under $(uname -s)."
+            log "  This bash bootstrapper is Linux/macOS only. On Windows,"
+            log "  open PowerShell and run:"
+            log ""
+            log "    \$env:DRIFT_TOKEN = \"$tok\""
+            log "    iwr -UseBasicParsing https://mcp.driftlabs.io/install.ps1 | iex"
+            log ""
+            exit 1
+            ;;
+        *) fatal "unsupported OS: $(uname -s)" ;;
     esac
 }
 

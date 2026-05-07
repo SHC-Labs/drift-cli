@@ -4,7 +4,7 @@
 // config files.
 //
 // Stores three things keyed by ItemKey* constants:
-//   - Token (drift_v1_<...>) the Bearer key for upstream Drift server
+//   - Token (drift_<base64url>) the Bearer key for upstream Drift server
 //   - InstallID (UUID) the anonymous machine identifier for state events
 //   - PrivKeyHex (64 hex chars) the customer's ECDH privkey for KEK wrap
 //

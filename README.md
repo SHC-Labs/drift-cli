@@ -23,7 +23,7 @@ winget install drift
 Provide your token to skip the manual login step:
 
 ```sh
-DRIFT_TOKEN=drift_v1_xxx curl -fsSL https://mcp.driftlabs.io/install | sh
+DRIFT_TOKEN=drift_xxx curl -fsSL https://mcp.driftlabs.io/install | sh
 ```
 
 Or run `drift login` after install to grab a token via the browser flow.

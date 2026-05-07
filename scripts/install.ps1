@@ -4,8 +4,8 @@
 # the service + write configs.
 #
 # Usage:
-#   iwr https://mcp.driftlabs.io/install.ps1 | iex
-#   $env:DRIFT_TOKEN = "drift_v1_xxx"; iwr https://mcp.driftlabs.io/install.ps1 | iex
+#   iwr -UseBasicParsing https://mcp.driftlabs.io/install.ps1 | iex
+#   $env:DRIFT_TOKEN = "drift_xxx"; iwr -UseBasicParsing https://mcp.driftlabs.io/install.ps1 | iex
 #
 # Verifies SHA-256 checksum of the downloaded archive. Refuses to
 # install on mismatch. Cosign signature verification lands once cosign
@@ -72,11 +72,25 @@ try {
     Move-Item -Path $exeSrc -Destination $exeDst -Force
     Log "installed to $exeDst"
 
-    # PATH advice. Power users often install to a custom dir not in PATH.
+    # Add install dir to User PATH (persistent) and to the current
+    # session's $env:PATH so the binary is callable immediately. Without
+    # the in-session update, drift install below works (called by full
+    # path), but `drift status` from a fresh prompt would say "command
+    # not found" until the user opens a new shell.
     $userPath = [Environment]::GetEnvironmentVariable('PATH', 'User')
     if ($userPath -notlike "*$DriftInstallDir*") {
-        Log "WARNING: $DriftInstallDir is not in your User PATH. Add via:"
-        Log "  [Environment]::SetEnvironmentVariable('PATH', `$env:PATH + ';$DriftInstallDir', 'User')"
+        $newUserPath = if ($userPath) { "$userPath;$DriftInstallDir" } else { $DriftInstallDir }
+        try {
+            [Environment]::SetEnvironmentVariable('PATH', $newUserPath, 'User')
+            Log "added $DriftInstallDir to User PATH (persistent)"
+        } catch {
+            Log "WARNING: could not auto-add $DriftInstallDir to User PATH: $_"
+            Log "  Add it manually with:"
+            Log "    [Environment]::SetEnvironmentVariable('PATH', `$env:PATH + ';$DriftInstallDir', 'User')"
+        }
+    }
+    if ($env:PATH -notlike "*$DriftInstallDir*") {
+        $env:PATH = "$env:PATH;$DriftInstallDir"
     }
 
     Log 'running drift install'

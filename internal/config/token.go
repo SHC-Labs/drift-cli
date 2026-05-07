@@ -6,9 +6,11 @@ import (
 	"strings"
 )
 
-// Token version discriminator. v1 tokens look like drift_v1_<payload>;
-// legacy tokens that pre-date the binary are drift_<hex> with no
-// version prefix and get treated as implicit v1 for back-compat.
+// Token version discriminator. The Drift dashboard issues
+// drift_<base64url> today (48 random bytes encoded as base64url, 64
+// chars after the prefix). Those tokens get treated as implicit v1 for
+// back-compat. Tokens with an explicit drift_v1_<base64url> prefix are
+// also accepted for forward-compat with a future server change.
 //
 // Future formats land at drift_v2_<payload> etc, validated strictly
 // (drift_v2x_... is rejected, not silently treated as v1) so the parser
@@ -29,8 +31,8 @@ var ErrTokenFormat = errors.New("token format invalid")
 //
 // Strict parsing: drift_v2x_... is rejected (looks v2-ish but isn't a
 // valid version prefix), drift_v1_ with empty payload is rejected,
-// missing prefix is rejected. Legacy drift_<hex> with at least 16 hex
-// chars is accepted as implicit v1.
+// missing prefix is rejected. drift_<base64url> with at least 16 chars
+// is accepted as implicit v1.
 func ValidateToken(token string) (version string, err error) {
 	if !strings.HasPrefix(token, TokenPrefix) {
 		return "", fmt.Errorf("%w: missing %q prefix", ErrTokenFormat, TokenPrefix)
@@ -46,8 +48,8 @@ func ValidateToken(token string) (version string, err error) {
 		if payload == "" {
 			return "", fmt.Errorf("%w: empty payload after %sv1_", ErrTokenFormat, TokenPrefix)
 		}
-		if !isHexLike(payload) {
-			return "", fmt.Errorf("%w: v1 payload must be hex-like (a-f, 0-9), got %q", ErrTokenFormat, payload)
+		if !isTokenPayload(payload) {
+			return "", fmt.Errorf("%w: v1 payload must be base64url chars (A-Za-z0-9_-), got %q", ErrTokenFormat, payload)
 		}
 		return "v1", nil
 	}
@@ -58,28 +60,32 @@ func ValidateToken(token string) (version string, err error) {
 		return "", fmt.Errorf("%w: unknown version prefix in %q (this binary handles v1 only)", ErrTokenFormat, token)
 	}
 
-	// Legacy drift_<hex>: pre-version-discriminator format. Accept if
-	// the payload is plausibly hex and at least 16 chars.
-	if !isHexLike(rest) {
-		return "", fmt.Errorf("%w: legacy payload must be hex-like, got %q", ErrTokenFormat, rest)
+	// Implicit v1: drift_<base64url>. The dashboard generates these as
+	// randomBytes(48).toString('base64url'), giving 64 chars over the
+	// charset A-Za-z0-9_-. Accept if charset is right and length is at
+	// least 16.
+	if !isTokenPayload(rest) {
+		return "", fmt.Errorf("%w: payload must be base64url chars (A-Za-z0-9_-), got %q", ErrTokenFormat, rest)
 	}
 	if len(rest) < 16 {
-		return "", fmt.Errorf("%w: legacy token too short (%d chars, want 16+)", ErrTokenFormat, len(rest))
+		return "", fmt.Errorf("%w: token too short (%d chars, want 16+)", ErrTokenFormat, len(rest))
 	}
 	return "legacy", nil
 }
 
-// isHexLike returns true if s contains only [0-9a-fA-F]. We don't care
-// about exact length here; the caller enforces minimums.
-func isHexLike(s string) bool {
+// isTokenPayload returns true if s contains only base64url chars
+// [A-Za-z0-9_-]. The dashboard issues tokens as base64url-encoded
+// random bytes; this matches that charset exactly.
+func isTokenPayload(s string) bool {
 	if s == "" {
 		return false
 	}
 	for _, r := range s {
 		switch {
 		case r >= '0' && r <= '9':
-		case r >= 'a' && r <= 'f':
-		case r >= 'A' && r <= 'F':
+		case r >= 'a' && r <= 'z':
+		case r >= 'A' && r <= 'Z':
+		case r == '_' || r == '-':
 		default:
 			return false
 		}

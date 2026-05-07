@@ -4,6 +4,13 @@ All notable changes to drift get logged here. Format follows [Keep a Changelog](
 
 ## [Unreleased]
 
+### Fixed (v0.1.1 hotfix)
+
+- Token validator accepts the actual dashboard charset (base64url: `A-Za-z0-9_-`) instead of hex-only. Previously rejected 100% of dashboard-issued tokens (`internal/config/token.go`, the `isHexLike` → `isTokenPayload` rename). Discovered by Tony on Magnum during v0.1.0 team test.
+- Bash installer detects MINGW / MSYS / Cygwin (Git Bash on Windows) and prints the literal PowerShell one-liner copy-paste-ready instead of "use install.ps1 on Windows" with no instructions (`scripts/install.sh`).
+- PowerShell installer auto-adds the install dir to User PATH (persistent) and refreshes `$env:PATH` in-session, replacing the easy-to-miss warning that left customers with `command not found` on first run (`scripts/install.ps1`).
+- README, STABILITY, install scripts, and keychain comment now describe the real `drift_<base64url>` token format. Previously documented a `drift_v1_<hex>` format that was never issued.
+
 ### Added (v1 first push)
 
 Single static Go binary replacing the bash CLI + npm relay + PowerShell supervisor + .bat hook wrappers.
@@ -34,7 +41,7 @@ Crypto + relay:
 - ECDH P-256 (NOT X25519) + KEK wrap with HKDF-SHA256 and fixed info strings (`drift-kek-wrap-v1`, `drift-session:`, `drift-tag-v1`)
 - `drift-e2ee-v1:` envelope encode/decode with controlled JSON field order for byte-identical TS interop
 - 11 passing crypto tests + 14 passing token validation tests
-- Token format with v1 discriminator (`drift_v1_*`), legacy `drift_<hex>` accepted as implicit v1
+- Token format: `drift_<base64url>` from the dashboard treated as implicit v1; explicit `drift_v1_*` accepted for forward-compat
 - Capability negotiation handshake with 24h cached result
 - Pubkey publishing flow, ECDH privkey persisted in OS keychain
 - KEK + DEK + per-project DEK managers with cache + invalidate-on-mismatch
