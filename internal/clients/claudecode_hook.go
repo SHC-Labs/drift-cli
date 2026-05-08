@@ -125,6 +125,13 @@ func registerHooksAt(settingsPath, exePath string) (string, error) {
 		}},
 	}
 
+	// Strip any orphan drift commands a customer (or a prior install)
+	// may have manually merged into a non-drift entry. Without this
+	// the upsert below appends a fresh tagged entry alongside the
+	// orphan, doubling the firing rate.
+	hooks["UserPromptSubmit"] = scrubDriftCommandsFromMixedEntries(hooks["UserPromptSubmit"])
+	hooks["PostToolUse"] = scrubDriftCommandsFromMixedEntries(hooks["PostToolUse"])
+
 	hooks["UserPromptSubmit"] = upsertHookEntry(hooks["UserPromptSubmit"], driftCheck)
 	hooks["PostToolUse"] = upsertHookEntry(hooks["PostToolUse"], driftReport)
 
@@ -181,7 +188,8 @@ func unregisterHooksAt(settingsPath string) (string, error) {
 		return settingsPath, err
 	}
 	for event, entries := range hooks {
-		filtered := entries[:0]
+		// First sweep: drop tagged entries + pure-drift untagged entries.
+		filtered := make([]hookEntry, 0, len(entries))
 		for _, e := range entries {
 			if e.Tag == driftHookMarker {
 				continue
@@ -191,6 +199,9 @@ func unregisterHooksAt(settingsPath string) (string, error) {
 			}
 			filtered = append(filtered, e)
 		}
+		// Second sweep: scrub orphan drift commands from any mixed
+		// user entries that survived the first pass.
+		filtered = scrubDriftCommandsFromMixedEntries(filtered)
 		if len(filtered) == 0 {
 			delete(hooks, event)
 		} else {
@@ -239,40 +250,105 @@ func upsertHookEntry(entries []hookEntry, newEntry hookEntry) []hookEntry {
 //     Magnum). v0.1.13 sweeps these so re-install converges on a
 //     single tagged entry.
 //
+// CRITICAL: matches only when EVERY hook command in the entry is a
+// drift command. An entry that mixes drift commands with user-owned
+// commands (e.g., a customer manually merged drift into their existing
+// rag-auto-search entry) is NOT legacy — replacing it would wipe the
+// user's work. scrubDriftCommandsFromMixedEntries handles the mixed
+// case by surgically removing only the drift commands.
+//
 // Used by upsertHookEntry so the Go binary's installer can replace
-// these in place rather than appending new tagged entries alongside
-// the broken legacy ones, and by unregisterHooksAt so uninstall
-// removes them too.
+// pure-drift untagged entries in place rather than appending new
+// tagged entries alongside the broken legacy ones, and by
+// unregisterHooksAt so uninstall removes them too.
 func isLegacyDriftHookEntry(e hookEntry) bool {
 	if e.Tag != "" {
 		// Anything tagged isn't legacy. drift-managed handled by the
 		// caller; foreign tags are user-owned.
 		return false
 	}
+	if len(e.Hooks) == 0 {
+		return false
+	}
 	for _, h := range e.Hooks {
 		if h.Type != "command" {
-			continue
+			return false
 		}
-		cmd := strings.ToLower(h.Command)
-		if strings.Contains(cmd, "drift-check.bat") ||
-			strings.Contains(cmd, "drift-check.sh") ||
-			strings.Contains(cmd, "drift-check.mjs") ||
-			strings.Contains(cmd, "drift-report.bat") ||
-			strings.Contains(cmd, "drift-report.sh") ||
-			strings.Contains(cmd, "drift-report.mjs") {
-			return true
-		}
-		// v0.1.0-v0.1.12 untagged binary entries. The "internal hook"
-		// subcommand is the unambiguous fingerprint: end users would
-		// never wire that string into a Claude Code hook by hand, and
-		// the cobra command is hidden so external scripts can't depend
-		// on it. Match on substring to tolerate any path/quoting style.
-		if strings.Contains(cmd, "internal hook prompt-submit") ||
-			strings.Contains(cmd, "internal hook post-tool-use") {
-			return true
+		if !isDriftHookCommand(h.Command) {
+			return false
 		}
 	}
+	return true
+}
+
+// isDriftHookCommand recognizes any command string that invokes a
+// drift hook handler — current Go binary subcommands or the legacy
+// bash-CLI wrappers. Used by isLegacyDriftHookEntry (entire-entry
+// match) and scrubDriftCommandsFromMixedEntries (per-hook removal).
+func isDriftHookCommand(cmd string) bool {
+	c := strings.ToLower(cmd)
+	if strings.Contains(c, "internal hook prompt-submit") ||
+		strings.Contains(c, "internal hook post-tool-use") {
+		return true
+	}
+	if strings.Contains(c, "drift-check.bat") ||
+		strings.Contains(c, "drift-check.sh") ||
+		strings.Contains(c, "drift-check.mjs") ||
+		strings.Contains(c, "drift-report.bat") ||
+		strings.Contains(c, "drift-report.sh") ||
+		strings.Contains(c, "drift-report.mjs") {
+		return true
+	}
 	return false
+}
+
+// scrubDriftCommandsFromMixedEntries removes drift hook commands from
+// untagged entries that ALSO contain user-owned commands. Customers
+// (or earlier versions of this installer + manual merge scripts) may
+// have appended a drift command into a pre-existing entry alongside
+// their own hooks. The strict isLegacyDriftHookEntry would skip those
+// entries (correctly preserving the user's hooks), but that leaves
+// the orphan drift command in place and it would fire twice once we
+// upsert a fresh tagged entry. Sweep them out first.
+//
+// Drift-tagged entries are left alone (upsertHookEntry replaces them
+// wholesale). Pure-drift untagged entries are also left alone here
+// (upsertHookEntry replaces them via the legacy path). Only mixed
+// entries get surgical edits.
+func scrubDriftCommandsFromMixedEntries(entries []hookEntry) []hookEntry {
+	out := make([]hookEntry, 0, len(entries))
+	for _, e := range entries {
+		if e.Tag == driftHookMarker || isLegacyDriftHookEntry(e) {
+			out = append(out, e)
+			continue
+		}
+		// Untagged + non-pure-drift = either purely user-owned (no
+		// changes needed) or a mixed entry with a drift command we
+		// need to strip. Filter by command predicate.
+		cleaned := make([]hookCommand, 0, len(e.Hooks))
+		removed := false
+		for _, h := range e.Hooks {
+			if h.Type == "command" && isDriftHookCommand(h.Command) {
+				removed = true
+				continue
+			}
+			cleaned = append(cleaned, h)
+		}
+		if !removed {
+			// Pure user entry, no changes needed.
+			out = append(out, e)
+			continue
+		}
+		if len(cleaned) == 0 {
+			// All hooks in the entry were drift commands; the strict
+			// isLegacyDriftHookEntry should have caught this above,
+			// but defensively drop the now-empty entry.
+			continue
+		}
+		e.Hooks = cleaned
+		out = append(out, e)
+	}
+	return out
 }
 
 // readRawSettings loads .claude/settings.local.json into a generic map.
