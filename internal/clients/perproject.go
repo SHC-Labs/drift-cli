@@ -71,12 +71,16 @@ func setupOne(d Detected, projectDir, relayURL, exePath string) ProjectSetupResu
 	r := ProjectSetupResult{ID: d.ID}
 	switch d.ID {
 	case ClaudeCode:
-		path, err := RegisterClaudeCodeHooks(projectDir, exePath)
-		r.HookPath = path
-		r.Err = err
-		if err == nil {
-			r.Action = "wrote"
-		}
+		// As of v0.1.13, Claude Code hooks are registered globally
+		// at install time via RegisterClaudeCodeHooksGlobal. The
+		// project-level hook entries v0.1.0-v0.1.12 wrote here got
+		// silently dropped by Claude Code's hook cascade whenever a
+		// global handler for the same event already existed (the
+		// v0.1.12 Magnum failure mode). Skipping the per-project
+		// write keeps the customer's settings.local.json clean.
+		// .drift.json (written separately by drift init) remains the
+		// per-project marker the global hook walks up to find.
+		r.Action = "skipped:hooks-installed-globally"
 	case Cursor:
 		mcpPath := filepath.Join(projectDir, ".cursor", "mcp.json")
 		if _, err := writeStandardMCP(mcpPath, relayURL); err != nil {

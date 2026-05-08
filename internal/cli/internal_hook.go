@@ -26,7 +26,7 @@ func newInternalCmd() *cobra.Command {
 			Hidden: true,
 			Short:  "UserPromptSubmit hook handler",
 			RunE: func(cmd *cobra.Command, args []string) error {
-				return hook.PromptSubmit(cmd.Context(), cmd.OutOrStdout())
+				return hook.PromptSubmit(cmd.Context(), cmd.InOrStdin(), cmd.OutOrStdout())
 			},
 		},
 		&cobra.Command{

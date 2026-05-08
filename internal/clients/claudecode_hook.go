@@ -60,11 +60,43 @@ type hookCommand struct {
 // keyed by driftHookMarker, leaving every other hook + every other top-
 // level setting untouched.
 //
+// As of v0.1.13 the install command also writes the same entries to
+// the global ~/.claude/settings.json via RegisterClaudeCodeHooksGlobal.
+// The project-level call here is retained for backward compatibility +
+// for clients that prefer per-project hook configs, but the global
+// path is the primary one because Claude Code drops project-level
+// hooks when the global file already defines a handler for the same
+// event (the symptom that bit the v0.1.12 Magnum test).
+//
 // Mirrors the bash drift-helpers.mjs registerHooks behavior except we
 // invoke "drift internal hook ..." subcommands directly instead of
 // shelling to a separate .sh file.
 func RegisterClaudeCodeHooks(projectDir, exePath string) (string, error) {
 	settingsPath := filepath.Join(projectDir, ".claude", "settings.local.json")
+	return registerHooksAt(settingsPath, exePath)
+}
+
+// RegisterClaudeCodeHooksGlobal writes the drift hook entries to the
+// global ~/.claude/settings.json so they fire for every Claude Code
+// session on this machine, regardless of the project. Same upsert
+// semantics as the per-project version: existing drift entries get
+// replaced, every other hook is preserved.
+//
+// Why global: Claude Code's hook cascade silently drops project-level
+// entries when global already defines a handler for the same event
+// (the v0.1.12 Magnum failure mode). Global is the only registration
+// point that always fires. The hook itself walks up from cwd to find
+// .drift.json so non-drift projects emit an INACTIVE response and
+// don't pollute unrelated work.
+func RegisterClaudeCodeHooksGlobal(exePath string) (string, error) {
+	return registerHooksAt(globalClaudeSettingsPath(), exePath)
+}
+
+// registerHooksAt is the shared implementation: read the settings file,
+// upsert the drift entries under UserPromptSubmit + PostToolUse, write
+// back atomically. settingsPath determines whether this is the global
+// or a per-project registration; behavior is otherwise identical.
+func registerHooksAt(settingsPath, exePath string) (string, error) {
 	root, err := readRawSettings(settingsPath)
 	if err != nil {
 		return "", err
@@ -99,12 +131,44 @@ func RegisterClaudeCodeHooks(projectDir, exePath string) (string, error) {
 	return settingsPath, writeHooksField(settingsPath, root, hooks)
 }
 
+// globalClaudeSettingsPath returns ~/.claude/settings.json, the global
+// hook config Claude Code reads for every session. We use settings.json
+// (committed-style) rather than settings.local.json because the
+// committed file is the durable source of truth; Claude Code merges
+// both at the same precedence level so either works, but settings.json
+// is what users expect machine-level config to live in.
+func globalClaudeSettingsPath() string {
+	home, err := os.UserHomeDir()
+	if err != nil || home == "" {
+		// Fallback to the relative path; the install caller will
+		// surface the failure when readRawSettings tries to open it.
+		return filepath.Join(".claude", "settings.json")
+	}
+	return filepath.Join(home, ".claude", "settings.json")
+}
+
 // UnregisterClaudeCodeHooks removes drift-tagged entries from
 // <projectDir>/.claude/settings.local.json. Other hooks (any entry
 // without our tag) are preserved. Idempotent: removing on a settings
 // file that has no drift entries is a no-op.
 func UnregisterClaudeCodeHooks(projectDir string) (string, error) {
 	settingsPath := filepath.Join(projectDir, ".claude", "settings.local.json")
+	return unregisterHooksAt(settingsPath)
+}
+
+// UnregisterClaudeCodeHooksGlobal removes drift-tagged entries from
+// the global ~/.claude/settings.json. Pair to RegisterClaudeCodeHooksGlobal.
+// Called by drift uninstall.
+func UnregisterClaudeCodeHooksGlobal() (string, error) {
+	return unregisterHooksAt(globalClaudeSettingsPath())
+}
+
+// unregisterHooksAt is the shared implementation for both project and
+// global unregister. Removes any entry tagged drift-managed AND any
+// untagged entry whose command points at a drift binary's `internal
+// hook` subcommand (covers v0.1.0-v0.1.12 entries that predate tagging
+// or got duplicated during partial upgrades).
+func unregisterHooksAt(settingsPath string) (string, error) {
 	root, err := readRawSettings(settingsPath)
 	if err != nil {
 		if errors.Is(err, os.ErrNotExist) {
@@ -119,9 +183,13 @@ func UnregisterClaudeCodeHooks(projectDir string) (string, error) {
 	for event, entries := range hooks {
 		filtered := entries[:0]
 		for _, e := range entries {
-			if e.Tag != driftHookMarker {
-				filtered = append(filtered, e)
+			if e.Tag == driftHookMarker {
+				continue
 			}
+			if isLegacyDriftHookEntry(e) {
+				continue
+			}
+			filtered = append(filtered, e)
 		}
 		if len(filtered) == 0 {
 			delete(hooks, event)
@@ -156,12 +224,25 @@ func upsertHookEntry(entries []hookEntry, newEntry hookEntry) []hookEntry {
 	return append(entries, newEntry)
 }
 
-// isLegacyDriftHookEntry returns true when entry looks like one the
-// pre-Go-binary bash CLI installed: command points at a drift-check or
-// drift-report wrapper script (.bat on Windows, .sh on Unix, .mjs in
-// some early variants). Used so the Go binary's drift init can replace
+// isLegacyDriftHookEntry returns true when entry looks like one a
+// previous drift install owned but that didn't carry the drift-managed
+// tag we now use to identify our entries. Two flavors covered:
+//
+//  1. Pre-Go-binary bash CLI: command points at a drift-check or
+//     drift-report wrapper script (.bat on Windows, .sh on Unix,
+//     .mjs in some early variants).
+//  2. Pre-v0.1.13 Go binary: command runs the binary directly via
+//     `<path>/drift[.exe] internal hook ...`. v0.1.0-v0.1.12 wrote
+//     entries without the _drift_tag field on at least some install
+//     paths (the upgrade flow re-inserted alongside the prior
+//     untagged entry, leaving Tony with two duplicate entries on
+//     Magnum). v0.1.13 sweeps these so re-install converges on a
+//     single tagged entry.
+//
+// Used by upsertHookEntry so the Go binary's installer can replace
 // these in place rather than appending new tagged entries alongside
-// the broken legacy ones.
+// the broken legacy ones, and by unregisterHooksAt so uninstall
+// removes them too.
 func isLegacyDriftHookEntry(e hookEntry) bool {
 	if e.Tag != "" {
 		// Anything tagged isn't legacy. drift-managed handled by the
@@ -179,6 +260,15 @@ func isLegacyDriftHookEntry(e hookEntry) bool {
 			strings.Contains(cmd, "drift-report.bat") ||
 			strings.Contains(cmd, "drift-report.sh") ||
 			strings.Contains(cmd, "drift-report.mjs") {
+			return true
+		}
+		// v0.1.0-v0.1.12 untagged binary entries. The "internal hook"
+		// subcommand is the unambiguous fingerprint: end users would
+		// never wire that string into a Claude Code hook by hand, and
+		// the cobra command is hidden so external scripts can't depend
+		// on it. Match on substring to tolerate any path/quoting style.
+		if strings.Contains(cmd, "internal hook prompt-submit") ||
+			strings.Contains(cmd, "internal hook post-tool-use") {
 			return true
 		}
 	}

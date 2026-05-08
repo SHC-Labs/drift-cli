@@ -9,6 +9,7 @@ import (
 
 	"github.com/spf13/cobra"
 
+	"github.com/SHC-Labs/drift/internal/clients"
 	"github.com/SHC-Labs/drift/internal/config"
 	"github.com/SHC-Labs/drift/internal/keychain"
 	driftlog "github.com/SHC-Labs/drift/internal/log"
@@ -99,6 +100,15 @@ func runUninstall(stdout, stderr io.Writer, keepConfigs bool) error {
 			fmt.Fprintf(stderr, "Note: clean ~/.mcp.json: %v\n", err)
 		} else {
 			fmt.Fprintf(stdout, "Removed drift entry from %s\n", config.MCPPath())
+		}
+		// Strip drift hook entries from the global Claude Code settings.
+		// Idempotent + scoped: removes only drift-tagged entries plus any
+		// pre-tag drift hook entries (the v0.1.0-v0.1.12 untagged variants).
+		// Other hooks the user wired up themselves are preserved.
+		if hookPath, err := clients.UnregisterClaudeCodeHooksGlobal(); err != nil {
+			fmt.Fprintf(stderr, "Note: clean Claude Code global hooks: %v\n", err)
+		} else if hookPath != "" {
+			fmt.Fprintf(stdout, "Removed drift hook entries from %s\n", hookPath)
 		}
 	}
 

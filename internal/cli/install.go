@@ -180,6 +180,29 @@ func runInstall(stdout, stderr io.Writer, customURL string, unsafeURL, keepLegac
 		}
 	}
 
+	// Register the prompt-submit + post-tool-use hooks in Claude Code's
+	// GLOBAL ~/.claude/settings.json so they fire for every session
+	// regardless of which project Claude Code opens. v0.1.0-v0.1.12 only
+	// wrote project-level hooks via drift init; that's fragile because
+	// Claude Code's hook cascade silently drops project-level entries
+	// when the global file already defines a handler for the same event
+	// (the v0.1.12 Magnum failure mode). The hook itself walks up from
+	// cwd to find .drift.json so non-drift projects emit INACTIVE and
+	// don't pollute unrelated work.
+	exePath, exeErr := os.Executable()
+	hookPath, hookErr := "", error(nil)
+	if exeErr == nil {
+		hookPath, hookErr = clients.RegisterClaudeCodeHooksGlobal(exePath)
+	} else {
+		hookErr = fmt.Errorf("locate own executable: %w", exeErr)
+	}
+	if hookErr != nil {
+		fmt.Fprintf(stderr, "Note: register Claude Code hooks globally: %v\n", hookErr)
+		fmt.Fprintln(stderr, "      drift_* tools are still callable manually; the auto-injected <drift-context> on each prompt won't fire.")
+	} else if hookPath != "" {
+		fmt.Fprintf(stdout, "Registered Claude Code hooks in %s\n", hookPath)
+	}
+
 	// Surface a hooks-aware vs hooks-less hint. Only Claude Code has
 	// auto-firing hooks in v1; other clients call drift_* tools
 	// manually via .cursorrules / AGENTS.md / similar.

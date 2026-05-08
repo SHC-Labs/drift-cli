@@ -49,26 +49,55 @@ const maxDeniedToolNameLen = 200
 // Caller (cobra cmd RunE) returns nil unconditionally so the AI client
 // gets exit 0 even on misconfiguration -- the loud-context block is the
 // signal, not the exit code.
-func PromptSubmit(ctx context.Context, stdout io.Writer) error {
+func PromptSubmit(ctx context.Context, stdin io.Reader, stdout io.Writer) error {
 	mcp, err := config.ReadMCP()
 	if err != nil {
 		EmitInactive(stdout, mcpInactiveReason(err))
 		return nil
 	}
 
-	// Dual walk-up: CLAUDE_PROJECT_DIR first, then PWD if they differ.
-	// Catches the Claude Code case where the IDE workspace folder is a
-	// parent above the actual project root.
-	projectDir := os.Getenv("CLAUDE_PROJECT_DIR")
-	if projectDir == "" {
-		projectDir, _ = os.Getwd()
+	// Triple walk-up to find .drift.json. Each Claude Code surface
+	// (CLI, VS Code extension, Desktop) sets a different combination of
+	// these signals, so we try all three and pick the first that wins:
+	//
+	//   1. CLAUDE_PROJECT_DIR env var. Set by Claude Code CLI; some
+	//      VS Code extension versions skip it.
+	//   2. cwd from the hook stdin payload. Claude Code's hook spec
+	//      includes {"cwd": "..."} on every fire; this is the most
+	//      reliable signal because it's set even when no env var is.
+	//   3. process working dir (os.Getwd). Whatever the OS shell
+	//      inherited; usually the IDE workspace root, but on Windows
+	//      sometimes the user home if Claude Code spawns the hook
+	//      detached.
+	//
+	// First match wins. The v0.1.12 Magnum failure mode was running
+	// against a Claude Code surface that didn't set CLAUDE_PROJECT_DIR
+	// AND spawned the hook with cwd=user-home; reading cwd from stdin
+	// covers that case for v0.1.13+.
+	candidates := []string{}
+	if v := os.Getenv("CLAUDE_PROJECT_DIR"); v != "" {
+		candidates = append(candidates, v)
 	}
-	driftPath, err := config.WalkUpForDrift(projectDir)
-	if errors.Is(err, config.ErrDriftConfigNotFound) {
-		pwd, _ := os.Getwd()
-		if pwd != "" && pwd != projectDir {
-			driftPath, err = config.WalkUpForDrift(pwd)
+	if v := readCwdFromHookStdin(stdin); v != "" {
+		candidates = append(candidates, v)
+	}
+	if pwd, perr := os.Getwd(); perr == nil && pwd != "" {
+		candidates = append(candidates, pwd)
+	}
+
+	var driftPath string
+	for _, c := range candidates {
+		driftPath, err = config.WalkUpForDrift(c)
+		if err == nil {
+			break
 		}
+		if !errors.Is(err, config.ErrDriftConfigNotFound) {
+			break
+		}
+	}
+	projectDir := ""
+	if len(candidates) > 0 {
+		projectDir = candidates[0]
 	}
 	if errors.Is(err, config.ErrDriftConfigNotFound) {
 		pwd, _ := os.Getwd()
@@ -175,6 +204,45 @@ func mcpInactiveReason(err error) string {
 	default:
 		return fmt.Sprintf("could not read ~/.mcp.json: %v", err)
 	}
+}
+
+// hookStdinPayload is the subset of Claude Code's UserPromptSubmit
+// hook stdin JSON that we read. Other fields are ignored. cwd is the
+// project root Claude Code resolved for this prompt; it's the most
+// reliable signal of where the customer's project lives because it's
+// set even when CLAUDE_PROJECT_DIR is empty and even when the hook
+// process inherited a wrong cwd from the OS shell.
+type hookStdinPayload struct {
+	CWD string `json:"cwd"`
+}
+
+// maxHookStdinBytes caps the stdin read so a malformed payload (or a
+// non-Claude-Code caller passing a large blob) can't hang the hook.
+// Claude Code's payload is well under 4KB in practice; we allow 32KB
+// of headroom for transcript_path or future additions.
+const maxHookStdinBytes = 32 * 1024
+
+// readCwdFromHookStdin reads the Claude Code hook payload from stdin
+// and extracts the cwd field. Best-effort: returns empty string on any
+// error (no stdin, not JSON, no cwd field). Caller treats empty as
+// "skip this candidate" and falls through to the next walk-up source.
+//
+// Reading stdin is safe even when stdin is empty (e.g. manual test):
+// io.ReadAll returns nil with no error, json.Unmarshal of empty bytes
+// returns an error which we swallow, and we fall through to env/cwd.
+func readCwdFromHookStdin(stdin io.Reader) string {
+	if stdin == nil {
+		return ""
+	}
+	body, err := io.ReadAll(io.LimitReader(stdin, maxHookStdinBytes))
+	if err != nil || len(body) == 0 {
+		return ""
+	}
+	var p hookStdinPayload
+	if err := json.Unmarshal(body, &p); err != nil {
+		return ""
+	}
+	return p.CWD
 }
 
 // readCachedHash returns the contents of the state-hash cache file, or
