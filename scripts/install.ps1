@@ -72,6 +72,33 @@ try {
     }
     $exeSrc = Join-Path $tmpDir 'drift.exe'
     $exeDst = Join-Path $DriftInstallDir 'drift.exe'
+
+    # If a previous drift.exe is at $exeDst and the relay is running, the
+    # binary is held open by the running process and Move-Item -Force
+    # fails with "Cannot create a file when that file already exists".
+    # Tony hit this on the v0.1.10 upgrade. Try a graceful stop via the
+    # old binary first; fall back to taskkill so the customer doesn't
+    # have to babysit a half-finished install.
+    if (Test-Path $exeDst) {
+        try {
+            & $exeDst relay stop 2>&1 | Out-Null
+        } catch { }
+        $running = Get-Process -Name 'drift' -ErrorAction SilentlyContinue
+        if ($running) {
+            Log "stopping running drift.exe processes (PIDs: $($running.Id -join ', '))"
+            try { Stop-Process -Name 'drift' -Force -ErrorAction Stop } catch {
+                Log "WARNING: could not stop drift.exe: $_"
+            }
+            # Brief wait so Windows releases the file handle before
+            # Move-Item runs. ~500ms is enough on every system tested;
+            # capped at 3s with a poll loop in case the OS is slow.
+            $deadline = (Get-Date).AddSeconds(3)
+            while ((Get-Process -Name 'drift' -ErrorAction SilentlyContinue) -and (Get-Date) -lt $deadline) {
+                Start-Sleep -Milliseconds 100
+            }
+        }
+    }
+
     Move-Item -Path $exeSrc -Destination $exeDst -Force
     Log "installed to $exeDst"
 

@@ -4,6 +4,10 @@ All notable changes to drift get logged here. Format follows [Keep a Changelog](
 
 ## [Unreleased]
 
+### Fixed (v0.1.12 hotfix)
+
+- `install.ps1` stops a running `drift.exe` before `Move-Item` overwrites the binary. Tony hit `Move-Item: Cannot create a file when that file already exists` on the v0.1.10 upgrade because the running v0.1.9 relay held `drift.exe` open and PowerShell can't replace open executables on Windows. The installer now tries `& $exeDst relay stop` first (graceful), then falls back to `Stop-Process -Name drift -Force` if anything is still running, then polls up to 3 seconds for the file handle to release before continuing. No-op on a fresh install where `$exeDst` doesn't exist yet. Removes the manual `taskkill /F /IM drift.exe` step from the upgrade path.
+
 ### Fixed (v0.1.11 hotfix)
 
 - DEKManager.Current and ProjectDEKManager.Get now self-heal under the same two failure modes the v0.1.10 KEK self-heal addressed, one cryptographic layer down. After v0.1.10 ships KEK rotation on solo-developer reinstall, the DEK on the server is still wrapped under the dead KEK and `aead.Open` returns `authenticated decryption failed`. Pre-v0.1.11 the relay had no recovery: it called `m.kek.Invalidate()` and surfaced the error, and the next call hit the same stale wrap with the same fresh KEK and looped. v0.1.11 adds `provisionFreshDEK` (org) and `provisionFreshProjectDEK` (per-project) which generate a fresh 32-byte DEK, wrap it under the current KEK with `wrapDekUnderKEK` (mirrors the TS relay's `wrapDek` byte layout: nonce(12) || tag(16) || ciphertext), and POST to `/api/relay/dek?rotate=true` (or `/api/relay/dek/by-project/<hash>?rotate=true`). The `?rotate=true` flag tells the server to bump the version atomically rather than 409 the conflict. Same path also covers the `HTTP 404` case: a fresh install with no DEK on the server provisions one without `?rotate=true` so the server inserts at version 1.
