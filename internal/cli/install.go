@@ -5,8 +5,10 @@ import (
 	"fmt"
 	"io"
 	"os"
+	"strings"
 	"time"
 
+	"github.com/charmbracelet/huh"
 	"github.com/spf13/cobra"
 
 	"github.com/SHC-Labs/drift/internal/api"
@@ -103,11 +105,33 @@ func runInstall(stdout, stderr io.Writer, customURL string, unsafeURL, keepLegac
 		}
 		fmt.Fprintf(stdout, "Stored API token in OS keychain (format: %s).\n", ver)
 	} else if existing, err := keychain.GetToken(); err != nil || existing == "" {
-		fmt.Fprintln(stderr, "Note: DRIFT_TOKEN not set and no existing token in keychain.")
-		fmt.Fprintln(stderr, "      The relay will reject MCP traffic until a token is stored.")
-		fmt.Fprintln(stderr, "      Get your key from https://app.driftlabs.io/profile and re-run with:")
-		fmt.Fprintln(stderr, "        DRIFT_TOKEN=<your-key> drift install")
-		fmt.Fprintln(stderr, "")
+		// No env var, no existing keychain entry. Try an interactive
+		// prompt before falling back to the deferred-token note.
+		// Customers running the install one-liner from a real terminal
+		// (the common path on a fresh machine) get a real prompt;
+		// scripted contexts (CI, no TTY) fall through to the note and
+		// can supply DRIFT_TOKEN later. v0.1.0-v0.1.16 always printed
+		// the note even on TTY, which left fresh customers with a
+		// non-functional install ("the relay will reject MCP traffic")
+		// and no obvious next step short of reading the README.
+		prompted, perr := promptForTokenInteractive(stdout)
+		switch {
+		case perr != nil:
+			// huh failed (probably no TTY). Fall back to the existing note.
+			printDeferredTokenNote(stderr)
+		case prompted == "":
+			// User pressed enter without pasting. Same fallback.
+			printDeferredTokenNote(stderr)
+		default:
+			ver, verr := config.ValidateToken(prompted)
+			if verr != nil {
+				return fmt.Errorf("DRIFT_TOKEN rejected: %w", verr)
+			}
+			if err := keychain.SetToken(prompted); err != nil {
+				return fmt.Errorf("store token in keychain: %w", err)
+			}
+			fmt.Fprintf(stdout, "Stored API token in OS keychain (format: %s).\n", ver)
+		}
 	} else {
 		fmt.Fprintln(stdout, "Existing token found in keychain (kept).")
 	}
@@ -347,6 +371,57 @@ func fireCLIInstalled(installID string) {
 	_ = api.PostWithRetry(parent, func(ctx context.Context) error {
 		return client.PostCLIInstalled(ctx, req)
 	})
+}
+
+// promptForTokenInteractive shows a TUI prompt asking the customer
+// to paste their DRIFT_TOKEN. Returns the trimmed token on success
+// (validated by config.ValidateToken via the form's validator), an
+// empty string if the customer pressed enter without input, or an
+// error if huh couldn't render (typically because stdin/stdout isn't
+// a TTY, in which case the caller falls back to the deferred-token
+// note). v0.1.17 added this so a fresh-customer install one-liner
+// produces a working setup without requiring DRIFT_TOKEN to be
+// pre-set in the environment.
+func promptForTokenInteractive(stdout io.Writer) (string, error) {
+	var token string
+	form := huh.NewForm(
+		huh.NewGroup(
+			huh.NewNote().
+				Title("Drift API token required").
+				Description("Get yours from https://app.driftlabs.io/profile (top-right menu, then API Keys).\n\nLeave blank to skip; the relay will start but reject MCP traffic until a token is stored."),
+			huh.NewInput().
+				Title("Paste your DRIFT_TOKEN").
+				EchoMode(huh.EchoModePassword).
+				Value(&token).
+				Validate(func(s string) error {
+					s = strings.TrimSpace(s)
+					if s == "" {
+						return nil
+					}
+					if _, err := config.ValidateToken(s); err != nil {
+						return err
+					}
+					return nil
+				}),
+		),
+	)
+	if err := form.Run(); err != nil {
+		return "", err
+	}
+	return strings.TrimSpace(token), nil
+}
+
+// printDeferredTokenNote is the v0.1.0-v0.1.16 fallback message when
+// no DRIFT_TOKEN is available and the interactive prompt couldn't
+// run (no TTY, huh failure, or customer pressed enter without input).
+// Tells the customer where to get a key and how to re-run install
+// with it.
+func printDeferredTokenNote(stderr io.Writer) {
+	fmt.Fprintln(stderr, "Note: DRIFT_TOKEN not set and no existing token in keychain.")
+	fmt.Fprintln(stderr, "      The relay will reject MCP traffic until a token is stored.")
+	fmt.Fprintln(stderr, "      Get your key from https://app.driftlabs.io/profile and re-run with:")
+	fmt.Fprintln(stderr, "        DRIFT_TOKEN=<your-key> drift install")
+	fmt.Fprintln(stderr, "")
 }
 
 // fireClientConnected posts a client-connected state event with
