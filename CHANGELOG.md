@@ -4,6 +4,12 @@ All notable changes to drift get logged here. Format follows [Keep a Changelog](
 
 ## [Unreleased]
 
+### Fixed (v0.1.16 hotfix)
+
+- `readRawSettings` now strips a UTF-8 BOM (`0xEF 0xBB 0xBF`) from the start of `~/.claude/settings.json` before parsing. Windows PowerShell 5.1's `Set-Content -Encoding UTF8` writes files with a BOM by default, and many Windows text editors (Notepad, the VS Code "save with BOM" setting) do the same. Go's `encoding/json` refuses to parse a BOM-prefixed input with `invalid character 'ï' looking for beginning of value`, which silently breaks the global hook registration step in `drift install` for any customer whose settings.json was last touched by a BOM-emitting tool. Surfaced on Tony's Magnum PC during the v0.1.15 install: install reported `Note: register Claude Code hooks globally: parse C:\Users\tchas\.claude\settings.json: invalid character 'ï' looking for beginning of value` and the hook never got registered. The forward-slash fix from v0.1.15 was correct; the BOM bug was the second-layer reason fresh customers would still hit a registration failure.
+- Same fix applies to `drift uninstall`: `unregisterHooksAt` calls the same `readRawSettings` helper, so uninstall now correctly removes drift hook entries from BOM-prefixed settings.json files instead of failing partway through with the same parse error.
+- New tests in `internal/clients/claudecode_hook_test.go` pin both the BOM-tolerant case (file with `0xEF 0xBB 0xBF` prefix parses correctly) and the no-BOM case (plain JSON file still parses without regression). Both run as part of `go test ./internal/clients/...`.
+
 ### Fixed (v0.1.15 hotfix)
 
 - v0.1.13/v0.1.14 registered drift hooks in the global `~/.claude/settings.json` correctly but the hooks STILL didn't fire on Tony's Magnum PC. Root cause identified via Claude Code source + docs research: Claude Code wraps hook commands in `bash -c "<command>"` on Windows by default (no `shell` field set means bash, not PowerShell, not direct CreateProcess). Bash's `-c` parsing strips backslashes as escape characters, so a command like `C:\Users\tony\.local\bin\drift.exe internal hook prompt-submit` becomes `C:Userstony.localbindrift.exe internal hook prompt-submit` after escape stripping. The binary path no longer resolves; bash exits with file-not-found and produces no stdout, so Claude Code has nothing to inject into the agent's prompt context. The brain-context hooks Tony has working (rag-auto-search.sh etc.) all use forward-slash paths and worked precisely because they avoided this trap.

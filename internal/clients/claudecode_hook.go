@@ -1,6 +1,7 @@
 package clients
 
 import (
+	"bytes"
 	"encoding/json"
 	"errors"
 	"fmt"
@@ -362,8 +363,23 @@ func scrubDriftCommandsFromMixedEntries(entries []hookEntry) []hookEntry {
 	return out
 }
 
+// utf8BOM is the three-byte UTF-8 byte-order mark some Windows text
+// editors (Notepad, PowerShell 5.1's Set-Content -Encoding UTF8, the
+// VS Code "save with BOM" option) prepend to UTF-8 files. Go's
+// encoding/json refuses to parse a BOM-prefixed input with `invalid
+// character 'ï' looking for beginning of value`, which silently
+// breaks drift install on machines where settings.json has been
+// touched by a BOM-emitting tool. v0.1.15 surfaced this on Tony's
+// Magnum PC: install reported "register Claude Code hooks globally:
+// parse C:\\Users\\...\\settings.json: invalid character 'ï' ..." and
+// the hook never got registered.
+var utf8BOM = []byte{0xEF, 0xBB, 0xBF}
+
 // readRawSettings loads .claude/settings.local.json into a generic map.
 // Missing file returns an empty map so callers can build from scratch.
+// BOM-prefixed UTF-8 files (the PowerShell Set-Content -Encoding UTF8
+// default on Windows PowerShell 5.1) are tolerated by stripping the
+// BOM before parsing.
 func readRawSettings(path string) (map[string]json.RawMessage, error) {
 	data, err := os.ReadFile(path)
 	if err != nil {
@@ -372,6 +388,7 @@ func readRawSettings(path string) (map[string]json.RawMessage, error) {
 		}
 		return nil, fmt.Errorf("read %s: %w", path, err)
 	}
+	data = bytes.TrimPrefix(data, utf8BOM)
 	var root map[string]json.RawMessage
 	if len(data) == 0 {
 		return map[string]json.RawMessage{}, nil
