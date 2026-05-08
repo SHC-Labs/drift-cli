@@ -4,6 +4,12 @@ All notable changes to drift get logged here. Format follows [Keep a Changelog](
 
 ## [Unreleased]
 
+### Fixed (v0.1.10 hotfix)
+
+- KEKManager.Get now self-heals when the server's stored wrap can't be unwrapped under the relay's current keypair, OR when no wrap exists for this developer. Ports the TS relay's `seedKekIfWeShould` flow into `internal/relay/kek.go`. Two failure modes that previously left solo-developer installs stuck without a usable KEK: (1) fresh install with no prior wrap returned `HTTP 404` from `/api/relay/kek-wrap` and the relay errored out instead of seeding; (2) reinstall with a different keychain entry (e.g. the npm-relay-era `service="drift-relay"` slot vs this binary's `service="drift"` slot) left a stale wrap on the server that decryption rejected with `authenticated decryption failed` and the relay had no recovery path. Both now route through `seedOrWait` which checks for org peers; alone, generates a fresh 32-byte KEK + self-wraps via `crypto.WrapKEKFor(kek, self.priv, self.pub)` + POSTs at the appropriate version. Stale-wrap recovery additionally calls `POST /api/relay/kek-wrap/revoke-below` so the dead wrap stops being returned on subsequent fetches.
+- New `WaitingForInviteError` type returned when no usable wrap exists AND other org members have published pubkeys. Multi-developer orgs require an existing member's relay to wrap the KEK for the new joiner via the existing `fulfillPendingWraps` poll path; seeding ourselves in that case would clobber the org's existing KEK. The error message names the peer count so the operator knows to ping a teammate instead of guessing what's broken.
+- New helpers in `internal/relay/kek.go`: `getMyDeveloperID` (calls `GET /api/relay/pubkey/me`), `countOrgPeers` (filters `GET /api/relay/pubkey` list), `postKEKWrap` (POSTs the self-wrap), `postRevokeBelow` (marks prior versions revoked), `isHTTP404` (substring-match on api.Client error text since the client doesn't expose status codes structurally). Imports `crypto/rand`, `errors`, `strings`. Build + vet clean against Go 1.25.
+
 ### Added (v0.1.9)
 
 - `drift quickstart` now renders a full-screen TUI form when stdin is a real terminal: a welcome note, multi-select for the LLM clients to configure (with the FULL / AGENTS.MD / MCP-ONLY tier label next to each), text input for the project root, and a confirm step. Built on `github.com/charmbracelet/huh`. Customers hitting the install one-liner from their terminal see a real wizard instead of a wall of line prompts.

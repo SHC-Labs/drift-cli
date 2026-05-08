@@ -2,8 +2,11 @@ package relay
 
 import (
 	"context"
+	"crypto/rand"
 	"encoding/base64"
+	"errors"
 	"fmt"
+	"strings"
 	"sync"
 	"time"
 
@@ -40,11 +43,38 @@ type pubkeyListResponse struct {
 	Pubkeys []pubkeyListEntry `json:"pubkeys"`
 }
 
+// myPubkeyResponse is the wire format from GET /api/relay/pubkey/me.
+// Used during seed to discover the caller's developer_id without an
+// extra walk through the org pubkey list.
+type myPubkeyResponse struct {
+	DeveloperID string `json:"developer_id"`
+	OrgID       string `json:"org_id"`
+	ECDHPubkey  string `json:"ecdh_pubkey"`
+	Fingerprint string `json:"fingerprint"`
+}
+
+// WaitingForInviteError signals that no usable wrap exists for this
+// developer AND other org members have already published pubkeys, so
+// the relay must NOT seed a fresh KEK (would clobber the org's
+// existing KEK). The expected resolution is for an existing org
+// member's relay to wrap the current KEK for the new recipient via
+// the POST /api/relay/kek-wrap path. Surface to the operator so they
+// know to ping a teammate.
+type WaitingForInviteError struct {
+	Peers int
+}
+
+func (e *WaitingForInviteError) Error() string {
+	return fmt.Sprintf("relay: KEK not yet wrapped for this developer; waiting for one of %d existing org member(s) to invite us", e.Peers)
+}
+
 // KEKManager owns the org KEK lifecycle: fetch wrapped, look up sender
 // pubkey, ECDH unwrap, cache, surface. The cached KEK lives in memory
 // only; never hits disk.
 //
-// Mirrors the TS relay's KekManager at the wire level.
+// Mirrors the TS relay's KekManager at the wire level, including the
+// solo-developer self-seed path that bootstraps the org KEK on first
+// install OR recovers from a stale wrap after a keypair change.
 type KEKManager struct {
 	client *api.Client
 	keys   *crypto.ECDHKeyPair
@@ -64,6 +94,17 @@ func NewKEKManager(client *api.Client, keys *crypto.ECDHKeyPair) *KEKManager {
 
 // Get returns the current org KEK, fetching + unwrapping from the
 // server on first call or after the cache expires. Caches for 1 hour.
+//
+// Self-heal paths (mirror TS relay's seedKekIfWeShould):
+//   - 404 from /api/relay/kek-wrap: no wrap exists. If this developer
+//     is alone (no peers with pubkeys), seed a fresh KEK at v1 and
+//     self-wrap. Otherwise return WaitingForInviteError so the operator
+//     knows to ping a teammate.
+//   - Unwrap fails with auth-failed: the stored wrap was encrypted for
+//     a different keypair (typically the user reinstalled and the
+//     keychain entry changed). If we're alone, seed at stale_version+1
+//     and call revoke-below to mark the old wrap dead. Otherwise
+//     return WaitingForInviteError.
 func (m *KEKManager) Get(ctx context.Context) ([]byte, error) {
 	m.mu.RLock()
 	if m.current != nil && time.Now().Before(m.expiry) {
@@ -81,6 +122,12 @@ func (m *KEKManager) Get(ctx context.Context) ([]byte, error) {
 
 	wrapped, err := fetchWrappedKEK(ctx, m.client)
 	if err != nil {
+		if isHTTP404(err) {
+			// No wrap exists for this developer. Either we're the
+			// first member (seed at v1) or a new joiner waiting for
+			// an existing dev to wrap (return WaitingForInvite).
+			return m.seedOrWait(ctx, 1, false)
+		}
 		return nil, fmt.Errorf("fetch KEK: %w", err)
 	}
 
@@ -95,6 +142,22 @@ func (m *KEKManager) Get(ctx context.Context) ([]byte, error) {
 
 	kek, err := crypto.UnwrapKEKFrom(wk, m.keys.Priv, senderPub)
 	if err != nil {
+		if errors.Is(err, crypto.ErrAuthFailed) {
+			// Stored wrap was encrypted for a different keypair than
+			// the one we currently have. Common cause: user reinstalled
+			// and the keychain entry changed (e.g. service-name
+			// migration from "drift-relay" to "drift" between the npm
+			// relay and this binary). Self-heal by seeding at the next
+			// version + revoking the stale wrap so future fetches don't
+			// keep trying the dead key.
+			log.Warn("relay.kek", "stale_wrap_detected", map[string]any{
+				"stale_version":   wrapped.KEKVersion,
+				"current_pub_fp":  crypto.PubKeyFingerprint(m.keys.Pub),
+				"sender_dev_id":   wrapped.SenderDeveloperID,
+				"recipient_dev":   wrapped.RecipientDeveloperID,
+			})
+			return m.seedOrWait(ctx, wrapped.KEKVersion+1, true)
+		}
 		return nil, fmt.Errorf("unwrap KEK: %w", err)
 	}
 	m.current = kek
@@ -117,6 +180,73 @@ func (m *KEKManager) Invalidate() {
 	defer m.mu.Unlock()
 	m.current = nil
 	m.expiry = time.Time{}
+}
+
+// seedOrWait is the self-heal entry point. Decides between three paths:
+//   - We're alone in the org -> seed fresh KEK at atVersion, optionally
+//     revoke the prior version (when recovering from a stale wrap).
+//   - We have peers -> WaitingForInviteError.
+//   - Server-side error during the decision -> bubble it up.
+//
+// Caller MUST hold m.mu.Lock(). Updates m.current / m.version / m.expiry
+// on successful seed before returning.
+func (m *KEKManager) seedOrWait(ctx context.Context, atVersion int, revokePrior bool) ([]byte, error) {
+	myID, err := getMyDeveloperID(ctx, m.client)
+	if err != nil {
+		return nil, fmt.Errorf("seed: discover own developer_id: %w", err)
+	}
+	peers, err := countOrgPeers(ctx, m.client, myID)
+	if err != nil {
+		return nil, fmt.Errorf("seed: count org peers: %w", err)
+	}
+	if peers > 0 {
+		log.Warn("relay.kek", "seed_skipped_peers_present", map[string]any{
+			"peers":      peers,
+			"my_dev_id":  myID,
+			"at_version": atVersion,
+		})
+		return nil, &WaitingForInviteError{Peers: peers}
+	}
+
+	kek := make([]byte, 32)
+	if _, err := rand.Read(kek); err != nil {
+		return nil, fmt.Errorf("seed: generate fresh KEK: %w", err)
+	}
+
+	wk, err := crypto.WrapKEKFor(kek, m.keys.Priv, m.keys.Pub)
+	if err != nil {
+		return nil, fmt.Errorf("seed: self-wrap: %w", err)
+	}
+
+	if err := postKEKWrap(ctx, m.client, myID, atVersion, wk); err != nil {
+		return nil, fmt.Errorf("seed: post wrap: %w", err)
+	}
+
+	if revokePrior {
+		// Best-effort: server returns 409 if other org members would
+		// be left without a wrap at the target version. For solo orgs
+		// (the only path that gets here today) that branch is
+		// unreachable; log + continue if it ever fires for an unknown
+		// reason rather than failing the seed entirely.
+		if err := postRevokeBelow(ctx, m.client, atVersion); err != nil {
+			log.Warn("relay.kek", "revoke_below_failed", map[string]any{
+				"target_version": atVersion,
+				"err":            err.Error(),
+			})
+		}
+	}
+
+	m.current = kek
+	m.version = atVersion
+	m.expiry = time.Now().Add(1 * time.Hour)
+
+	log.Info("relay.kek", "seeded", map[string]any{
+		"version":         atVersion,
+		"fingerprint":     crypto.Fingerprint(kek),
+		"recovered_stale": revokePrior,
+	})
+
+	return append([]byte{}, kek...), nil
 }
 
 // fetchWrappedKEK calls GET /api/relay/kek-wrap to retrieve the
@@ -145,6 +275,72 @@ func lookupSenderPubkey(ctx context.Context, c *api.Client, senderDeveloperID st
 	return nil, fmt.Errorf("sender %s pubkey not in org list", senderDeveloperID)
 }
 
+// getMyDeveloperID calls GET /api/relay/pubkey/me to discover the
+// caller's developer_id. The /me endpoint returns 404 only when the
+// caller hasn't published a pubkey yet, which shouldn't happen in
+// the seed flow (EnsureKeyPair publishes before KEKManager.Get is
+// called). Surface that as an explicit error rather than a silent
+// fallback so the operator knows to re-run install.
+func getMyDeveloperID(ctx context.Context, c *api.Client) (string, error) {
+	var resp myPubkeyResponse
+	if err := c.GetJSON(ctx, "/api/relay/pubkey/me", &resp); err != nil {
+		return "", fmt.Errorf("GET /api/relay/pubkey/me: %w", err)
+	}
+	if resp.DeveloperID == "" {
+		return "", fmt.Errorf("server returned empty developer_id from /api/relay/pubkey/me")
+	}
+	return resp.DeveloperID, nil
+}
+
+// countOrgPeers returns the number of OTHER developers in the caller's
+// org that have published pubkeys. selfID is excluded. Used by the
+// seed path to decide whether seeding is safe (alone) or whether to
+// wait for an invite (peers exist).
+func countOrgPeers(ctx context.Context, c *api.Client, selfID string) (int, error) {
+	var resp pubkeyListResponse
+	if err := c.GetJSON(ctx, "/api/relay/pubkey", &resp); err != nil {
+		return 0, fmt.Errorf("list pubkeys: %w", err)
+	}
+	count := 0
+	for _, p := range resp.Pubkeys {
+		if p.DeveloperID != selfID {
+			count++
+		}
+	}
+	return count, nil
+}
+
+// postKEKWrap inserts a self-wrap for selfID at the given version.
+// recipient and sender are both selfID since this is the solo-dev
+// seed path; the symmetric ECDH wrap means we can decrypt our own
+// wrap on subsequent fetches.
+func postKEKWrap(ctx context.Context, c *api.Client, selfID string, version int, wk *crypto.WrappedKEK) error {
+	body := map[string]any{
+		"recipient_developer_id": selfID,
+		"kek_version":            version,
+		"wrapped_kek":            base64.StdEncoding.EncodeToString(wk.Wrapped),
+		"nonce":                  base64.StdEncoding.EncodeToString(wk.Nonce),
+		"tag":                    base64.StdEncoding.EncodeToString(wk.Tag),
+	}
+	if err := c.PostJSON(ctx, "/api/relay/kek-wrap", body); err != nil {
+		return fmt.Errorf("POST /api/relay/kek-wrap: %w", err)
+	}
+	return nil
+}
+
+// postRevokeBelow marks all wraps at versions < belowVersion as
+// revoked. Called only after a successful seed at the new version, so
+// the prior stale wrap doesn't keep showing up in subsequent fetches.
+// Server returns 409 if any active developer would be left without a
+// wrap at the target version; for solo orgs that's unreachable.
+func postRevokeBelow(ctx context.Context, c *api.Client, belowVersion int) error {
+	body := map[string]any{"below_version": belowVersion}
+	if err := c.PostJSON(ctx, "/api/relay/kek-wrap/revoke-below", body); err != nil {
+		return fmt.Errorf("POST /api/relay/kek-wrap/revoke-below: %w", err)
+	}
+	return nil
+}
+
 // decodeWrappedKEK turns the base64 fields from the wire response
 // into the byte slices crypto.UnwrapKEKFrom expects.
 func decodeWrappedKEK(resp *kekFetchResponse) (*crypto.WrappedKEK, error) {
@@ -165,4 +361,18 @@ func decodeWrappedKEK(resp *kekFetchResponse) (*crypto.WrappedKEK, error) {
 		Nonce:   nonce,
 		Tag:     tag,
 	}, nil
+}
+
+// isHTTP404 returns true if err looks like an HTTP 404 from the
+// api.Client GetJSON / PostJSON path. The client formats errors as
+// "get PATH: HTTP 404: BODY" so we substring-match. Roberto's
+// api.Client doesn't expose status codes structurally; this is the
+// least-invasive way to differentiate "no wrap exists" (404) from
+// other HTTP failures (5xx, network error) without changing the
+// client's public surface.
+func isHTTP404(err error) bool {
+	if err == nil {
+		return false
+	}
+	return strings.Contains(err.Error(), "HTTP 404")
 }
