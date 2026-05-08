@@ -107,11 +107,22 @@ func registerHooksAt(settingsPath, exePath string) (string, error) {
 		return "", err
 	}
 
+	// Normalize the binary path for shell consumption. On Windows
+	// os.Executable() returns backslash paths like
+	// `C:\Users\tony\.local\bin\drift.exe`. Claude Code wraps hook
+	// commands in bash on Windows by default; bash strips backslashes
+	// as escape chars during -c parsing, so the binary fails to launch
+	// silently with no stdout. The brain-context hooks Tony has
+	// working all use forward slashes, which both bash on Windows
+	// (Git Bash/MSYS) and cmd.exe accept. Normalizing fixes the path
+	// without forcing customers to add a `shell` field.
+	hookExe := normalizeExePathForHook(exePath)
+
 	driftCheck := hookEntry{
 		Tag: driftHookMarker,
 		Hooks: []hookCommand{{
 			Type:    "command",
-			Command: shellQuote(exePath) + " internal hook prompt-submit",
+			Command: shellQuote(hookExe) + " internal hook prompt-submit",
 			Timeout: HookCommandTimeout,
 		}},
 	}
@@ -120,7 +131,7 @@ func registerHooksAt(settingsPath, exePath string) (string, error) {
 		Tag:     driftHookMarker,
 		Hooks: []hookCommand{{
 			Type:    "command",
-			Command: shellQuote(exePath) + " internal hook post-tool-use",
+			Command: shellQuote(hookExe) + " internal hook post-tool-use",
 			Timeout: PostToolUseTimeout,
 		}},
 	}
@@ -420,4 +431,22 @@ func shellQuote(p string) string {
 	}
 	// Escape internal double quotes; surround with double quotes.
 	return `"` + strings.ReplaceAll(p, `"`, `\"`) + `"`
+}
+
+// normalizeExePathForHook converts a Windows backslash path (the form
+// os.Executable() returns) into a forward-slash path that bash on
+// Windows can resolve. Claude Code defaults to invoking hook commands
+// via bash even on Windows; bash -c parsing treats backslashes as
+// escape characters and strips them, so a command like
+// `C:\Users\tony\.local\bin\drift.exe` becomes `C:Userstony.localbindrift.exe`
+// after escape stripping and the binary fails to launch silently with
+// no stdout (the v0.1.10-v0.1.14 Magnum failure mode).
+//
+// Forward slashes work in cmd, PowerShell, and bash on Windows because
+// the Win32 API accepts both. The brain-context hooks Tony has
+// working all use forward-slash paths for the same reason.
+//
+// On non-Windows platforms this is a no-op.
+func normalizeExePathForHook(p string) string {
+	return strings.ReplaceAll(p, `\`, `/`)
 }
