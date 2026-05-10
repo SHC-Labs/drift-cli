@@ -72,3 +72,20 @@ func IsAccessDenied(err error) bool {
 		strings.Contains(msg, "access is denied") ||
 		strings.Contains(msg, "ERROR_ACCESS_DENIED")
 }
+
+// IsAlreadyExists returns true when err looks like the OS service
+// manager rejecting an install because the service is already
+// registered. Hits two paths that produce different strings:
+// kardianos's own check for an existing systemd unit / launchd plist
+// returns "Init already exists"; Windows' SCM CreateService syscall
+// returns "service already exists" (ERROR_SERVICE_EXISTS, code 1073).
+// String-match for the same reason as IsAccessDenied: kardianos wraps
+// without exporting a sentinel.
+func IsAlreadyExists(err error) bool {
+	if err == nil {
+		return false
+	}
+	msg := strings.ToLower(err.Error())
+	return strings.Contains(msg, "already exists") ||
+		strings.Contains(msg, "error_service_exists")
+}

@@ -125,16 +125,41 @@ func New() (service.Service, error) {
 
 // Install registers the service with the OS service manager. Creates
 // the systemd unit / launchd plist / Windows Service entry. Idempotent:
-// re-running drift install just upserts the entry.
+// re-running drift install over an existing service takes ownership of
+// it (Stop + Uninstall + Install) so the binary path updates to the
+// current install location. v0.1.0-v0.1.18 leaked an "already exists"
+// error here and dead-ended customers who re-ran the install one-liner
+// on a machine with a stale service from a previous attempt.
+//
+// On Windows the take-ownership path needs admin (sc.exe delete
+// requires elevation). If the cleanup fails with access-denied the
+// wrapped error preserves the "Access is denied" substring so the
+// caller in cli/install.go can fall back to the user-mode Startup
+// .cmd launcher (IsAccessDenied check, same as the no-admin fresh
+// install path).
 func Install() error {
 	s, err := New()
 	if err != nil {
 		return err
 	}
-	if err := s.Install(); err != nil {
-		// kardianos returns a "service already exists" error which we
-		// treat as success (idempotent install).
+	err = s.Install()
+	if err == nil {
+		return nil
+	}
+	if !IsAlreadyExists(err) {
 		return fmt.Errorf("install %s service: %w", Name, err)
+	}
+	// Existing service from a previous install attempt. Take ownership.
+	// Stop is best-effort: the service may already be stopped, may be
+	// pointing at a stale binary that won't respond, may need admin we
+	// don't have. We don't care, the Uninstall right after is what
+	// matters.
+	_ = s.Stop()
+	if uerr := s.Uninstall(); uerr != nil {
+		return fmt.Errorf("install %s service: existing service blocks new install and uninstall failed: %w", Name, uerr)
+	}
+	if rerr := s.Install(); rerr != nil {
+		return fmt.Errorf("install %s service: reinstall after takeover failed: %w", Name, rerr)
 	}
 	return nil
 }

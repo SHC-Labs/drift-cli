@@ -4,6 +4,16 @@ All notable changes to drift get logged here. Format follows [Keep a Changelog](
 
 ## [Unreleased]
 
+## [0.1.19]
+
+### Fixed (v0.1.19 hotfix)
+
+- `service.Install()` now takes ownership of an existing OS-registered "drift" service instead of bailing with "service already exists". v0.1.0-v0.1.18 had a comment in `internal/service/service.go` literally stating that the kardianos "already exists" error should be treated as success ("idempotent install") but the code returned the wrapped error anyway. The mismatch dead-ended every customer who re-ran the install one-liner on a machine that had a stale service from a previous install attempt: the relay never started, `drift status` reported `service: stopped + relay health: down`, and the only documented recovery told customers to open an admin PowerShell and `sc.exe delete drift` themselves. Surfaced on a fresh Windows VM during the v0.1.18 test pass: clean install one-liner failed with "Note: service install failed: install drift service: service drift already exists" and there was no path forward without elevation.
+- New `IsAlreadyExists(err)` helper in `internal/service/install_user_windows.go` and `install_user_other.go` (parallel to the existing `IsAccessDenied`). Lowercase substring match on "already exists" plus "ERROR_SERVICE_EXISTS" on Windows. String-match is the only reliable check: kardianos wraps the underlying syscall / file-existence errors in its own type without exporting a sentinel.
+- `Install()` now branches on the `s.Install()` error: clean success returns nil; non-already-exists errors propagate unchanged; already-exists triggers a take-ownership sequence (`s.Stop()` best-effort, then `s.Uninstall()`, then a fresh `s.Install()`). The Stop is intentionally best-effort because the existing service may be stopped, may point at a stale binary that won't respond, or may need permissions we don't have. The Uninstall is what actually matters: it clears the SCM entry so the new Install can register against the current binary path.
+- The take-ownership path needs admin on Windows (`sc.exe delete` is privileged). When uninstall fails with access-denied, the wrapped error string preserves "Access is denied" so the existing `cli/install.go` `IsAccessDenied` branch catches it and falls through to `service.InstallUserMode()`, dropping the Startup folder `.cmd` launcher exactly as it does for the no-admin fresh-install path. End-to-end: re-install non-admin on a stale-service Windows box now either succeeds cleanly (the existing service was non-privileged or admin was available) or falls back to user-mode autostart (no dead-end).
+- The same fix benefits Linux + macOS in the rare case a previous install left an orphan systemd user unit / launchd plist file: the take-ownership path runs cross-platform.
+
 ## [0.1.18]
 
 ### Added
