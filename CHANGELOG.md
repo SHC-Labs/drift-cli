@@ -4,6 +4,16 @@ All notable changes to drift get logged here. Format follows [Keep a Changelog](
 
 ## [Unreleased]
 
+## [0.1.20]
+
+### Fixed (v0.1.20 hotfix)
+
+- New `_relay` hidden subcommand that runs `relay.Run()` directly with no kardianos in the path, replacing `_service` as the entrypoint Windows non-admin installs use. Surfaced on a fresh Quickemu Windows 10 VM during the v0.1.19 visual pass: even after v0.1.19's take-ownership service registration succeeded, the actual relay process never stayed up — `drift status` reported `relay health: down`, the local relay at `127.0.0.1:<port>` was unreachable, every `drift_*` MCP tool call from Claude Code returned "could not reach the local relay". Reboot would briefly revive things via the Startup folder `.cmd`, then the kardianos-mediated `_service` interactive-mode fallback would die within minutes with no autostart, dropping the customer back into a non-functional relay.
+- Root cause: kardianos's interactive-mode fallback on Windows is fragile when launched detached with no console (which both `InstallUserMode`'s immediate-launch and the Startup folder `.cmd` autostart do). Without an SCM dispatcher to attach to, kardianos either bails immediately or starts the service in a state that can't recover from any internal stall. The `_relay` rewrite drops kardianos entirely from the user-mode path: bare `relay.Run` with a `signal.NotifyContext` for graceful shutdown on SIGINT/SIGTERM. Same lifecycle the SCM path exercises internally, just without the SCM dispatcher in front.
+- `InstallUserMode` (`internal/service/install_user_windows.go`) now writes `start "" /b "<exe>" _relay` into the Startup folder `.cmd` instead of `_service`, and launches `drift.exe _relay` (not `_service`) for the immediate post-install launch. End-to-end on a non-admin Windows machine: install one-liner runs → service.Install hits "already exists" or access-denied → falls through to `InstallUserMode` → drops the `.cmd` and launches `_relay` detached → relay binds on its persisted port → `drift status` reports `relay health: up` in the same shell session, no reboot or relogin required.
+- Real Windows Service path (admin install) is unchanged: kardianos still drives `_service` registration + start, the v0.1.19 take-ownership behavior still applies for upgrade scenarios.
+- Linux + macOS unaffected — `InstallUserMode` is Windows-only, the systemd-user / launchd paths still go through kardianos as before.
+
 ## [0.1.19]
 
 ### Fixed (v0.1.19 hotfix)

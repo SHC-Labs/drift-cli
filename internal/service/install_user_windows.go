@@ -40,14 +40,22 @@ func InstallUserMode() (string, error) {
 	// `start "" /b` launches detached, no console window. The empty
 	// "" is the title argument start.exe requires when the first arg
 	// would otherwise be parsed as the title.
-	content := fmt.Sprintf("@echo off\r\nstart \"\" /b \"%s\" _service\r\n", exe)
+	//
+	// v0.1.20: launches `_relay` instead of `_service`. The kardianos-
+	// mediated `_service` path needs an SCM dispatcher; in a detached
+	// no-console context (which both this immediate-launch and the
+	// Startup-folder autostart hit) kardianos either bails or starts
+	// the relay in a fragile interactive-fallback state that dies
+	// within minutes. `_relay` is a bare relay.Run() with a signal
+	// handler — no SCM, no kardianos, runs until SIGINT/SIGTERM.
+	content := fmt.Sprintf("@echo off\r\nstart \"\" /b \"%s\" _relay\r\n", exe)
 	if err := os.WriteFile(cmdPath, []byte(content), 0o644); err != nil {
 		return "", fmt.Errorf("write %s: %w", cmdPath, err)
 	}
-	// Launch the service NOW so the customer doesn't have to log out
+	// Launch the relay NOW so the customer doesn't have to log out
 	// + back in. Detached (CREATE_NEW_PROCESS_GROUP + DETACHED_PROCESS)
 	// so it survives the parent install process exiting.
-	cmd := exec.Command(exe, "_service")
+	cmd := exec.Command(exe, "_relay")
 	cmd.SysProcAttr = &syscall.SysProcAttr{
 		CreationFlags: 0x00000008 | 0x00000200, // DETACHED_PROCESS | CREATE_NEW_PROCESS_GROUP
 	}

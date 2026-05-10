@@ -39,6 +39,7 @@ See https://drift.io for docs.`,
 		newTelemetryCmd(),
 		newInternalCmd(),
 		newServiceCmd(),
+		newRelayDaemonCmd(),
 	)
 
 	return root
