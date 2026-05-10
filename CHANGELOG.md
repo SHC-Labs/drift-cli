@@ -4,6 +4,16 @@ All notable changes to drift get logged here. Format follows [Keep a Changelog](
 
 ## [Unreleased]
 
+## [0.1.18]
+
+### Added
+
+- New `drift token set` command. Drops the customer into a masked TUI prompt (charmbracelet/huh, EchoModePassword), validates the pasted value against `config.ValidateToken`, then writes it into the OS keychain via `keychain.SetToken` (service "drift", account "token"). Lets a customer rotate their API key after a leak or routine hygiene without having to re-run the full install one-liner. Refuses to run when stdin isn't a TTY (returns a non-zero exit and tells the caller to use `DRIFT_TOKEN=... drift install` for scripted flows) so we never silently no-op in CI. Cancellation via ESC leaves the keychain unchanged. The new command lives at `internal/cli/token.go`; the parent `drift token` cobra group is wired into `newRootCmd` so future token-management subcommands (rotate, status) can land alongside without another root edit. Closes the W9.1 / Sprint A item from the V6 launch plan; the new `/kb/api-key-management` article and the dashboard's revised LLMInstallPrompt both already reference this command.
+
+### Changed
+
+- `drift quickstart` now prints a wrap-up block at the end of `runWizardSteps` covering the four things the customer (and the LLM that pasted the install one-liner) needs to know on the way out: per-OS token storage location with the keychain backend named explicitly (Keychain on macOS, Secret Service on Linux, Credential Manager on Windows) and the OS-native command to view it (Keychain Access.app, `secret-tool lookup`, `cmdkey /list`), the rotation hint pointing at the new `drift token set` command, the multi-project hint pointing at `cd <project> && drift init`, and the `~/.drift/logs/drift.log` path with rotation policy. Closes with cross-links to the new `/kb/api-key-management` and `/kb/troubleshooting-drift-relay` articles. New `printWrapUp` and `keychainBackendDescription` helpers in `internal/cli/quickstart.go`. Closes the W0.5 Sprint A item.
+
 ### Fixed (v0.1.17 hotfix)
 
 - `drift install` now prompts interactively for the API token when none is found in the `DRIFT_TOKEN` env var or the OS keychain. v0.1.0-v0.1.16 silently printed a `Note: DRIFT_TOKEN not set` message and continued, which left fresh customers with a non-functional install (relay running but rejecting all MCP traffic) and no obvious next step short of reading the README. The install one-liner served from `mcp.driftlabs.io/install.ps1` doesn't pre-set the env var, so EVERY fresh customer hit this. Tony's full uninstall + reinstall on Magnum surfaced it as the next-layer blocker after the v0.1.16 BOM fix landed.

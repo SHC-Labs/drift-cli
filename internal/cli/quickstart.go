@@ -9,6 +9,7 @@ import (
 	"net/http"
 	"os"
 	"path/filepath"
+	"runtime"
 	"strings"
 	"time"
 
@@ -18,6 +19,7 @@ import (
 	"github.com/SHC-Labs/drift/internal/clients"
 	"github.com/SHC-Labs/drift/internal/config"
 	"github.com/SHC-Labs/drift/internal/ipc"
+	driftlog "github.com/SHC-Labs/drift/internal/log"
 )
 
 func newQuickstartCmd() *cobra.Command {
@@ -275,14 +277,56 @@ func runWizardSteps(stdout, stderr io.Writer, noService bool, projectRoot string
 		verifyRelayWarmup(stdout, stderr, projectRoot)
 	}
 
+	printWrapUp(stdout, projectRoot)
+	return nil
+}
+
+// printWrapUp is the W0.5 add. After the wizard succeeds the customer
+// needs to know four things on their way out: where their token lives
+// (per-OS keychain), how to add Drift to additional projects on this
+// machine, where the relay logs are when something looks off, and how
+// to rotate the token after the first leak. We print all four so the
+// LLM that ran the install does not have to invent the answers.
+func printWrapUp(stdout io.Writer, projectRoot string) {
 	fmt.Fprintln(stdout, "")
 	fmt.Fprintln(stdout, "============================================================")
 	fmt.Fprintln(stdout, "Done. Open your LLM client in "+projectRoot+" and start prompting.")
 	fmt.Fprintln(stdout, "")
-	fmt.Fprintln(stdout, "  drift status   # health check")
-	fmt.Fprintln(stdout, "  drift doctor   # full diagnostics")
+	fmt.Fprintln(stdout, "Health checks:")
+	fmt.Fprintln(stdout, "  drift status                       # one-shot summary")
+	fmt.Fprintln(stdout, "  drift doctor                       # full diagnostics")
+	fmt.Fprintln(stdout, "")
+	fmt.Fprintln(stdout, "Token storage on this machine:")
+	fmt.Fprintln(stdout, "  "+keychainBackendDescription())
+	fmt.Fprintln(stdout, "  Rotate after a leak:               drift token set")
+	fmt.Fprintln(stdout, "")
+	fmt.Fprintln(stdout, "Add Drift to another project on this machine:")
+	fmt.Fprintln(stdout, "  cd <project-root> && drift init    # one-time per repo")
+	fmt.Fprintln(stdout, "")
+	fmt.Fprintln(stdout, "Logs:")
+	fmt.Fprintln(stdout, "  "+driftlog.LogPath()+"   (rotates at 10MB, keeps 5 generations)")
+	fmt.Fprintln(stdout, "")
+	fmt.Fprintln(stdout, "Reference:")
+	fmt.Fprintln(stdout, "  https://app.driftlabs.io/kb/api-key-management")
+	fmt.Fprintln(stdout, "  https://app.driftlabs.io/kb/troubleshooting-drift-relay")
 	fmt.Fprintln(stdout, "============================================================")
-	return nil
+}
+
+// keychainBackendDescription returns a one-line per-OS description of
+// where the token landed. Customers (and the LLM that pasted the
+// install one-liner) need this so the next "where is my token" question
+// has an answer that doesn't require booting drift status.
+func keychainBackendDescription() string {
+	switch runtime.GOOS {
+	case "darwin":
+		return "macOS Keychain (service \"drift\", account \"token\") — view via Keychain Access.app"
+	case "linux":
+		return "Linux Secret Service (service \"drift\", account \"token\") — view via secret-tool lookup service drift account token"
+	case "windows":
+		return "Windows Credential Manager (target \"drift\", account \"token\") — view via cmdkey /list:drift"
+	default:
+		return "OS keychain (service \"drift\", account \"token\")"
+	}
 }
 
 // runInitInDirFiltered runs the equivalent of `drift init` in projectDir
