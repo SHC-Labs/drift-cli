@@ -5,6 +5,7 @@ import (
 	"fmt"
 	"io"
 	"os"
+	"runtime"
 	"strings"
 	"time"
 
@@ -263,7 +264,22 @@ func runInstall(stdout, stderr io.Writer, customURL string, unsafeURL, keepLegac
 		}
 	}
 
-	if !noService {
+	if !noService && runtime.GOOS == "windows" {
+		// v0.1.23: Windows always goes through user-mode autostart,
+		// never through kardianos. Reason: kardianos registers a real
+		// Windows Service that SCM runs as LocalSystem (we don't set
+		// UserName in service.Config). LocalSystem doesn't have the
+		// install user's ~/.drift/config.json, so the launched
+		// _service can't find its persisted relay port and dies in
+		// seconds. SCM marks the service Stopped, the relay never
+		// binds. v0.1.18 - v0.1.22 all hit this and we wrongly thought
+		// it was a non-admin spawn issue. The fix is just: don't use
+		// kardianos on Windows. InstallUserMode (Startup folder .cmd
+		// + immediate detached _relay) runs as the install user with
+		// the right profile, finds the right config, binds the relay.
+		fmt.Fprintln(stdout, "Installing user-mode autostart (Windows runs the relay in your user session, not as LocalSystem).")
+		fallToUserMode(stdout, stderr)
+	} else if !noService {
 		if err := service.Install(); err != nil {
 			// Windows path: kardianos service install fails with
 			// "Access is denied" when PowerShell isn't elevated. Don't

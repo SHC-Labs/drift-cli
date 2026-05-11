@@ -4,6 +4,14 @@ All notable changes to drift get logged here. Format follows [Keep a Changelog](
 
 ## [Unreleased]
 
+## [0.1.23]
+
+### Fixed (v0.1.23 hotfix)
+
+- Windows now always uses the user-mode autostart path (Startup folder `.cmd` + immediate detached `_relay` spawn), never kardianos's Windows Service registration. Surfaced via Tony's full install scrollback on a fresh Quickemu Windows 10 VM after v0.1.22 shipped: install printed `Registered drift as a system service. Service started.` (kardianos path succeeded), but `drift status` immediately reported `service: stopped + relay health: down`, and the relay never bound its persisted port. v0.1.18 - v0.1.22 all chased this as a "non-admin spawn fragility" issue. The actual root cause is `LocalSystem` user context, not non-admin: kardianos registers a real Windows Service via SCM, and we don't set `UserName` in the `service.Config`, so SCM defaults to running the launched `drift.exe _service` as the `LocalSystem` account. LocalSystem's `os.UserHomeDir()` is `C:\Windows\System32\config\systemprofile\`, NOT the install user's profile. So `_service` reads `~/.drift/config.json` from LocalSystem's profile, finds nothing, `program.Start()` returns "no relay port persisted", kardianos exits, SCM marks the service Stopped within 2 seconds. The relay never gets to bind anything. Same bug regardless of whether the install user was admin or non-admin.
+- The fix is small. `cli/install.go` `runInstall` now branches on `runtime.GOOS == "windows"`: on Windows it skips `service.Install()` entirely and calls `fallToUserMode` (which exercises the existing `InstallUserMode` code path with the v0.1.20 `_relay` subcommand and the v0.1.22 `CREATE_NO_WINDOW` + log-redirected spawn flags). The user-mode launcher runs as the install user, in the install user's session, with the install user's profile. It finds `~/.drift/config.json`, `_relay` binds the port, `drift status` reports `relay health: up`. The non-Windows path (Linux systemd user units, macOS launchd plists) is unchanged because kardianos's `UserService: true` actually does the right thing on those platforms.
+- Linux + macOS get nothing in this release. Pure Windows fix.
+
 ## [0.1.22]
 
 ### Fixed (v0.1.22 hotfix)
