@@ -4,6 +4,14 @@ All notable changes to drift get logged here. Format follows [Keep a Changelog](
 
 ## [Unreleased]
 
+## [0.1.21]
+
+### Fixed (v0.1.21 hotfix)
+
+- `drift install` now falls through to the `InstallUserMode` Startup folder + `_relay` launcher when `service.Start()` fails with access-denied, not only when `service.Install()` fails. v0.1.0-v0.1.20 only triggered the user-mode fallback when Install errored; once v0.1.19 made take-ownership succeed against an existing service entry, Install would return nil for non-admin customers, then Start would silently fail (sc.exe start needs admin to run a freshly-registered service), no fallback would fire, and the install would complete with a registered-but-stopped Windows Service and no relay process. `drift status` reported `service: stopped + relay health: down`, MCP unreachable, customer stuck. Surfaced on a Quickemu Windows 10 VM during the v0.1.20 visual pass: v0.1.20's `_relay` rewrite was correct but the InstallUserMode codepath that uses it was never reached on the Start-failed branch.
+- New `fallToUserMode(stdout, stderr)` helper extracted from the existing Install-failed branch so both the Install-failed and Start-failed access-denied paths share one source of truth for the .cmd drop + immediate `_relay` launch + the "For a real Windows Service, re-run as admin" guidance message. Idempotent: re-running over an existing Startup `.cmd` overwrites it; the detached `_relay` process either binds the persisted port and runs forever, or exits cleanly when another `drift.exe` already holds the port.
+- End-to-end on a non-admin Windows machine after v0.1.21: install one-liner runs → service.Install take-ownership succeeds → service.Start fails access-denied → Note is printed AND `fallToUserMode` fires → `.cmd` lands in Startup folder + `drift.exe _relay` launches detached → relay binds on its persisted port → `drift status` reports `relay health: up` in the same shell session, no reboot, no relogin, MCP fires immediately from Claude Code.
+
 ## [0.1.20]
 
 ### Fixed (v0.1.20 hotfix)

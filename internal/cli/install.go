@@ -273,15 +273,7 @@ func runInstall(stdout, stderr io.Writer, customURL string, unsafeURL, keepLegac
 			// Customers who want a real Windows Service (auto-restart,
 			// system-wide) can re-run drift install with admin.
 			if service.IsAccessDenied(err) {
-				cmdPath, ferr := service.InstallUserMode()
-				switch {
-				case ferr != nil:
-					fmt.Fprintf(stderr, "Note: service install needs admin AND user-mode fallback failed: %v\n", ferr)
-					fmt.Fprintln(stderr, "      Re-run PowerShell as admin and try again, or use --no-service to skip.")
-				default:
-					fmt.Fprintf(stdout, "Installed user-mode autostart at %s and launched the relay.\n", cmdPath)
-					fmt.Fprintln(stdout, "      For a real Windows Service (auto-restart on crash, system-wide), re-run as admin.")
-				}
+				fallToUserMode(stdout, stderr)
 			} else {
 				fmt.Fprintf(stderr, "Note: service install failed: %v\n", err)
 				fmt.Fprintln(stderr, "      Re-run with --no-service to skip, or fix the error and re-run drift install.")
@@ -289,8 +281,23 @@ func runInstall(stdout, stderr io.Writer, customURL string, unsafeURL, keepLegac
 		} else {
 			fmt.Fprintln(stdout, "Registered drift as a system service.")
 			if err := service.Start(); err != nil {
-				fmt.Fprintf(stderr, "Note: service start failed: %v\n", err)
-				fmt.Fprintln(stderr, "      Service is registered but not running; check 'drift relay status'.")
+				// v0.1.21: Install can succeed without admin in some
+				// take-ownership paths (v0.1.19 Stop+Uninstall+reInstall
+				// flow), but Start needs admin to call sc.exe start on
+				// the freshly-registered service. Without this fallback
+				// the customer ends up with a registered-but-stopped
+				// service and no relay process: drift status reports
+				// service:stopped + relay health:down, MCP dies. Falling
+				// through to InstallUserMode drops the Startup .cmd +
+				// launches _relay detached so the relay actually runs in
+				// the same shell session as install.
+				if service.IsAccessDenied(err) {
+					fmt.Fprintln(stderr, "Note: service start needs admin; falling back to user-mode autostart so the relay runs without elevation.")
+					fallToUserMode(stdout, stderr)
+				} else {
+					fmt.Fprintf(stderr, "Note: service start failed: %v\n", err)
+					fmt.Fprintln(stderr, "      Service is registered but not running; check 'drift relay status'.")
+				}
 			} else {
 				fmt.Fprintln(stdout, "Service started.")
 			}
@@ -310,6 +317,26 @@ func runInstall(stdout, stderr io.Writer, customURL string, unsafeURL, keepLegac
 	fmt.Fprintln(stdout, "Done. Next step: run 'drift init' inside any project root you want Drift coordination on.")
 	fmt.Fprintln(stdout, "If anything breaks, run `drift doctor` and paste output to hello@driftlabs.io.")
 	return nil
+}
+
+// fallToUserMode drops the Windows Startup folder .cmd launcher and
+// kicks off the relay process now via InstallUserMode. Shared by both
+// the "Install failed access-denied" path and the v0.1.21 "Install
+// succeeded but Start failed access-denied" path. On non-Windows the
+// underlying InstallUserMode is a no-op stub that returns an error;
+// the caller surfaces a guidance message. Idempotent: re-running over
+// an existing Startup .cmd overwrites it; the detached _relay process
+// either binds the persisted port and runs forever, or fails to bind
+// (because another drift.exe is already on it) and exits cleanly.
+func fallToUserMode(stdout, stderr io.Writer) {
+	cmdPath, ferr := service.InstallUserMode()
+	if ferr != nil {
+		fmt.Fprintf(stderr, "Note: user-mode fallback failed: %v\n", ferr)
+		fmt.Fprintln(stderr, "      Re-run PowerShell as admin and try again, or use --no-service to skip.")
+		return
+	}
+	fmt.Fprintf(stdout, "Installed user-mode autostart at %s and launched the relay.\n", cmdPath)
+	fmt.Fprintln(stdout, "      For a real Windows Service (auto-restart on crash, system-wide), re-run as admin.")
 }
 
 // urlAllowlisted enforces the MCP URL allowlist. See plan section
