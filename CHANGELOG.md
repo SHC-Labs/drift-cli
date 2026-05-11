@@ -4,6 +4,16 @@ All notable changes to drift get logged here. Format follows [Keep a Changelog](
 
 ## [Unreleased]
 
+## [0.1.22]
+
+### Fixed (v0.1.22 hotfix)
+
+- `InstallUserMode` on Windows now uses `CREATE_NO_WINDOW` (0x08000000) instead of `DETACHED_PROCESS|CREATE_NEW_PROCESS_GROUP` for the immediate-launch spawn flags. The DETACHED_PROCESS combination is a documented Go-on-Windows footgun: the child process is left with no inherited console handles at all, the Go runtime intermittently panics during init when it touches stdio for any reason, and the child dies within seconds with no way to capture the cause. Surfaced on Tony's Quickemu Windows 10 VM through v0.1.18 - v0.1.21: `_relay` daemon code worked perfectly when run foreground (proven via interactive `drift _relay` test, `drift status` from a separate PowerShell window confirmed `relay health: up`), but the InstallUserMode-launched detached version died immediately. CREATE_NO_WINDOW gives the child a real (hidden) console with valid stdio handles, the proven pattern Tailscale + Syncthing both ship for non-admin Windows daemon paths.
+- The launched relay's `Stdin` is now wired to the Windows `NUL` device and `Stdout`/`Stderr` to `~/.drift/logs/drift.log`. Two reasons: (1) explicit valid file handles guarantee the child has somewhere to write that survives the parent install process exiting, eliminating the "writing to a closed handle" crash mode; (2) any panic stack trace the relay emits now lands in a file the customer (or `drift doctor`) can read post-mortem instead of being swallowed by a closed handle.
+- The Startup folder `drift-relay.cmd` now wraps the launch in `cmd /C` with explicit log redirection: `start "" /B cmd /C ""<exe>" _relay >> "<log>" 2>&1"`. Plain `start "" /B exe _relay` inherits the calling cmd.exe's console for the child; when cmd.exe exits at the end of the .cmd, those console handles get invalidated and the next stdio write from the child crashes it. Wrapping in `cmd /C` with explicit file redirection gives the child stdio that points at a real file the OS keeps valid for the lifetime of the process.
+- After the immediate-launch `cmd.Start()` succeeds, we call `cmd.Process.Release()` to detach our handle so the OS can reap the child without us holding a Wait goroutine.
+- End-to-end on a non-admin Windows machine: install one-liner runs → take-ownership Install + Start fail access-denied → `fallToUserMode` (v0.1.21) fires → InstallUserMode (v0.1.22 spawn flags) drops the .cmd and launches `_relay` with valid stdio → `drift status` reports `relay health: up` in the same shell session, no reboot, no relogin, no admin.
+
 ## [0.1.21]
 
 ### Fixed (v0.1.21 hotfix)
