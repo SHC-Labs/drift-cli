@@ -9,13 +9,34 @@ import (
 	"path/filepath"
 	"strings"
 	"syscall"
+
+	driftlog "github.com/SHC-Labs/drift/internal/log"
 )
 
+// CreateNoWindow is the Windows process creation flag that runs a
+// process without giving it a console. Different from DETACHED_PROCESS:
+// DETACHED_PROCESS leaves the child with no inherited console handles
+// at all, which the Go runtime can mishandle (intermittent invalid-
+// handle panics during runtime init), and makes the child's stdio
+// reads/writes return ERROR_INVALID_HANDLE the moment anything in the
+// runtime or imported packages touches them. CREATE_NO_WINDOW gives
+// the child a real (hidden) console it can write to without crashing.
+//
+// We pair this with explicit Stdin/Stdout/Stderr redirection (NUL for
+// stdin, the drift log file for stdout+stderr) so any panic from the
+// child still ends up in a readable file post-mortem instead of being
+// swallowed by a closed handle. v0.1.18 - v0.1.21 used
+// DETACHED_PROCESS|CREATE_NEW_PROCESS_GROUP and the child died
+// silently within seconds of launch; CREATE_NO_WINDOW + explicit
+// redirection is the proven pattern (Tailscale + Syncthing both ship
+// it for their non-admin Windows daemon paths).
+const createNoWindow = 0x08000000
+
 // InstallUserMode is the Windows fallback for when kardianos service
-// install fails because PowerShell isn't running as admin. Drops a
-// .cmd launcher in the user's Startup folder so the relay starts on
-// next login, and launches the relay process now so the customer
-// doesn't have to log out + back in.
+// install or start fails because PowerShell isn't running as admin.
+// Drops a .cmd launcher in the user's Startup folder so the relay
+// starts on next login, and launches the relay process now so the
+// customer doesn't have to log out + back in.
 //
 // Less robust than a real Windows Service: no auto-restart on crash,
 // no system-wide persistence, no stdout/stderr capture into Event Log.
@@ -36,33 +57,62 @@ func InstallUserMode() (string, error) {
 	if err != nil {
 		return "", fmt.Errorf("locate drift executable: %w", err)
 	}
+
+	logPath := driftlog.LogPath()
+	if err := os.MkdirAll(filepath.Dir(logPath), 0o755); err != nil {
+		return "", fmt.Errorf("create log dir %s: %w", filepath.Dir(logPath), err)
+	}
+
 	cmdPath := filepath.Join(startup, "drift-relay.cmd")
-	// `start "" /b` launches detached, no console window. The empty
-	// "" is the title argument start.exe requires when the first arg
-	// would otherwise be parsed as the title.
-	//
-	// v0.1.20: launches `_relay` instead of `_service`. The kardianos-
-	// mediated `_service` path needs an SCM dispatcher; in a detached
-	// no-console context (which both this immediate-launch and the
-	// Startup-folder autostart hit) kardianos either bails or starts
-	// the relay in a fragile interactive-fallback state that dies
-	// within minutes. `_relay` is a bare relay.Run() with a signal
-	// handler — no SCM, no kardianos, runs until SIGINT/SIGTERM.
-	content := fmt.Sprintf("@echo off\r\nstart \"\" /b \"%s\" _relay\r\n", exe)
+	// v0.1.22: launch via `cmd /C start /B` with explicit stdout/stderr
+	// redirect. Plain `start "" /B exe args` inherits cmd.exe's console
+	// for the child; when cmd.exe exits at the end of the .cmd, the
+	// console handles get invalidated and the next stdio write from the
+	// child crashes it. Wrapping in `cmd /C` with `> log 2>&1` gives
+	// the child stdio that points at a real file the OS keeps valid for
+	// the lifetime of the process.
+	content := fmt.Sprintf(
+		"@echo off\r\n"+
+			"start \"\" /B cmd /C \"\"%s\" _relay >> \"%s\" 2>&1\"\r\n",
+		exe, logPath,
+	)
 	if err := os.WriteFile(cmdPath, []byte(content), 0o644); err != nil {
 		return "", fmt.Errorf("write %s: %w", cmdPath, err)
 	}
+
 	// Launch the relay NOW so the customer doesn't have to log out
-	// + back in. Detached (CREATE_NEW_PROCESS_GROUP + DETACHED_PROCESS)
-	// so it survives the parent install process exiting.
+	// + back in. CREATE_NO_WINDOW gives the child a hidden console
+	// with valid stdio handles; explicit Stdin=NUL + Stdout/Stderr=log
+	// file ensures the child has somewhere to write that survives the
+	// parent install process exiting.
+	logFile, err := os.OpenFile(logPath, os.O_APPEND|os.O_CREATE|os.O_WRONLY, 0o644)
+	if err != nil {
+		return cmdPath, fmt.Errorf("autostart installed at %s but log open failed: %w", cmdPath, err)
+	}
+	defer logFile.Close()
+
+	nul, err := os.OpenFile("NUL", os.O_RDWR, 0)
+	if err != nil {
+		return cmdPath, fmt.Errorf("autostart installed at %s but NUL open failed: %w", cmdPath, err)
+	}
+	defer nul.Close()
+
 	cmd := exec.Command(exe, "_relay")
+	cmd.Stdin = nul
+	cmd.Stdout = logFile
+	cmd.Stderr = logFile
 	cmd.SysProcAttr = &syscall.SysProcAttr{
-		CreationFlags: 0x00000008 | 0x00000200, // DETACHED_PROCESS | CREATE_NEW_PROCESS_GROUP
+		HideWindow:    true,
+		CreationFlags: createNoWindow,
 	}
 	if err := cmd.Start(); err != nil {
 		return cmdPath, fmt.Errorf("autostart installed at %s but immediate launch failed: %w", cmdPath, err)
 	}
-	// Don't wait — leave it running.
+	// Don't wait — leave it running. The Process.Release call lets the
+	// OS reap the child without us holding a Wait goroutine.
+	if cmd.Process != nil {
+		_ = cmd.Process.Release()
+	}
 	return cmdPath, nil
 }
 
