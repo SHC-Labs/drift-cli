@@ -209,6 +209,14 @@ func encryptingHandler(pipeline *Pipeline, proxy *httputil.ReverseProxy) http.Ha
 				http.Error(w, "read body", http.StatusBadRequest)
 				return
 			}
+			// Attach project_hash + project_name to project-aware drift_*
+			// tool calls when the caller didn't include them. Runs before
+			// EncryptRequestBody so extractProjectHash sees the injected
+			// hash and picks the per-project DEK for envelope encryption.
+			// The injected fields live under params.arguments (not
+			// tool_input) so the encryption walker leaves them as plaintext
+			// metadata, which is what the server's project resolution needs.
+			body = InjectProjectContext(body)
 			encrypted, err := pipeline.EncryptRequestBody(r.Context(), body)
 			if err != nil {
 				log.Warn("relay", "encrypt_request_failed", map[string]any{

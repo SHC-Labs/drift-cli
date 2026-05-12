@@ -5,9 +5,78 @@ import (
 	"encoding/json"
 	"fmt"
 
+	"github.com/SHC-Labs/drift/internal/config"
 	"github.com/SHC-Labs/drift/internal/crypto"
 	"github.com/SHC-Labs/drift/internal/log"
 )
+
+// projectAwareTools is the set of MCP tools that take a project_hash
+// argument server-side. The relay rewrites JSON-RPC tools/call requests
+// for these tools to inject project_hash + project_name from the hook
+// breadcrumb when the caller omitted them. Keeping the set tight (only
+// tools that actually use the field) avoids cluttering unrelated tool
+// payloads with state the server would ignore.
+var projectAwareTools = map[string]bool{
+	"drift_declare_intent":  true,
+	"drift_broadcast_change": true,
+	"drift_claim_files":     true,
+}
+
+// InjectProjectContext rewrites a JSON-RPC tools/call request body to
+// add project_hash + project_name from ~/.drift/state/current-project.json
+// when the tool is project-aware AND the caller didn't already supply
+// project_hash in arguments. Returns the (possibly modified) body or the
+// original bytes unchanged when:
+//
+//   - body is not JSON or not a tools/call envelope
+//   - the tool name isn't in projectAwareTools
+//   - arguments.project_hash is already set
+//   - no breadcrumb exists (fresh install, hook never fired)
+//
+// Best-effort: any error path returns the original body so the proxy
+// never fails a request because the inject step couldn't run.
+func InjectProjectContext(body []byte) []byte {
+	if len(body) == 0 {
+		return body
+	}
+	var envelope map[string]any
+	if err := json.Unmarshal(body, &envelope); err != nil {
+		return body
+	}
+	method, _ := envelope["method"].(string)
+	if method != "tools/call" {
+		return body
+	}
+	params, ok := envelope["params"].(map[string]any)
+	if !ok {
+		return body
+	}
+	toolName, _ := params["name"].(string)
+	if !projectAwareTools[toolName] {
+		return body
+	}
+	args, ok := params["arguments"].(map[string]any)
+	if !ok {
+		args = map[string]any{}
+	}
+	if existing, _ := args["project_hash"].(string); existing != "" {
+		return body
+	}
+	state, err := config.ReadCurrentProjectState()
+	if err != nil || state == nil {
+		return body
+	}
+	args["project_hash"] = state.ProjectHash
+	if _, hasName := args["project_name"].(string); !hasName && state.ProjectName != "" {
+		args["project_name"] = state.ProjectName
+	}
+	params["arguments"] = args
+	out, err := json.Marshal(envelope)
+	if err != nil {
+		return body
+	}
+	return out
+}
 
 // Pipeline owns the encrypt/decrypt path for MCP request/response
 // bodies. Outbound: scan JSON for content fields, encrypt with the

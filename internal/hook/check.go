@@ -126,6 +126,12 @@ func PromptSubmit(ctx context.Context, stdin io.Reader, stdout io.Writer) error 
 	projectDirForHash := filepath.Dir(driftPath)
 	projectHash := ProjectHash(projectDirForHash)
 
+	// Drop a breadcrumb the relay picks up out-of-band so drift_* MCP
+	// calls without an explicit project_hash in arguments still attribute
+	// to the right project. Best-effort: a failed state write must never
+	// block the hook from emitting its context block.
+	_ = config.WriteCurrentProjectState(projectHash, projectDirForHash)
+
 	// Best-effort policy sync: only PUT when content changed since last sync.
 	syncProjectPolicy(ctx, mcp, cfg, projectHash)
 
